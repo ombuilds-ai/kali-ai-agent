@@ -1,0 +1,26 @@
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+venv/
+env/
+ENV/
+.venv
+
+# Build and PyInstaller output
+build/
+dist/
+*.spec
+
+# IDE & OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local Config & Temp Files
+.kali_ai_config.json
+*.log
+scratch/
