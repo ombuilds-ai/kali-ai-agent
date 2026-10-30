@@ -8,12 +8,21 @@ import sys
 SOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTALLER_PATH = os.path.join(SOURCE_DIR, 'install.sh')
 
-# Files to embed in the installer
+# Files to embed in the installer (must include EVERY runtime module or the
+# extracted install will crash with ImportError at startup).
 files_to_embed = [
     'config.py',
-    'guardrails.py', 
+    'guardrails.py',
     'screenshot.py',
+    'environment.py',
+    'shell_session.py',
+    'tools.py',
+    'jobs.py',
+    'ghidra.py',
     'executor.py',
+    'memory.py',
+    'sessions.py',
+    'plugins.py',
     'ai_engine.py',
     'gui.py',
     'main.py',

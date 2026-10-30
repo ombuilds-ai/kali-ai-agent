@@ -17,6 +17,8 @@ DEFAULT_CONFIG = {
     "gemini_api_key": "",
     "gemini_model": "gemini-2.0-flash",
     "font_size": 13,
+    "operator_mode": True,       # never refuse authorized security tasks
+    "free_models_only": False,   # OpenRouter: show only free models
 }
 
 

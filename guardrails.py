@@ -93,6 +93,44 @@ _BLOCKED_PATTERNS: list[tuple[re.Pattern, str]] = [
     # Dangerous eval patterns
     (re.compile(r"\beval\s+.*\$\(.*base64\s+-d", re.I),
      "Eval with base64 decoded content"),
+
+    # Recursive deletion of home / critical system directories (beyond bare root)
+    (re.compile(r"\brm\s+(?:-\S+\s+)*-?\S*r\S*f\S*\s+(?:~|\$HOME)(?:/|\s|$)", re.I),
+     "Recursive forced deletion of the home directory"),
+    (re.compile(r"\brm\s+(?:-\S+\s+)*-?\S*[rf]\S*[rf]\S*\s+/(?:etc|var|usr|bin|sbin|lib|lib64|boot|root|home|opt)(?:/\s|/?$|\s)", re.I),
+     "Recursive forced deletion of a critical system directory"),
+
+    # Mass deletion via find
+    (re.compile(r"\bfind\s+/(?:etc|var|usr|bin|sbin|lib|boot|root|home)?\S*\s+.*-delete\b", re.I),
+     "Mass deletion via find -delete on system paths"),
+    (re.compile(r"\bfind\s+/\S*\s+.*-exec\s+rm\b", re.I),
+     "Mass deletion via find -exec rm"),
+
+    # Disk writes to any block device (extends sd/hd to nvme/vd/mmc)
+    (re.compile(r"\bdd\s+.*of=/dev/(?:sd|hd|nvme|vd|mmcblk|loop)", re.I),
+     "Direct disk write with dd"),
+    (re.compile(r">\s*/dev/(?:sd|hd|nvme|vd|mmcblk)", re.I),
+     "Redirect output to a raw disk device"),
+
+    # Moving/overwriting critical system paths
+    (re.compile(r"\bmv\s+.*\s+/(?:etc|boot|bin|sbin|lib|lib64|usr)(?:/\s*$|\s*$)", re.I),
+     "Moving over a critical system directory"),
+    (re.compile(r">\s*/(?:etc/(?:passwd|shadow|sudoers|fstab|hosts)|boot/\S+)\b", re.I),
+     "Overwriting a critical system/auth file"),
+
+    # Recursive permission/ownership changes on system trees
+    (re.compile(r"\bchmod\s+-R\s+\S+\s+/(?:etc|usr|var|boot|bin|sbin|lib|lib64|root)\b", re.I),
+     "Recursive permission change on a system directory"),
+    (re.compile(r"\bchown\s+-R\s+\S+\s+/(?:etc|usr|var|boot|bin|sbin|lib|lib64|root)\b", re.I),
+     "Recursive ownership change on a system directory"),
+
+    # Wipe all cron jobs
+    (re.compile(r"\bcrontab\s+-r\b", re.I),
+     "Removing all cron jobs"),
+
+    # Overwrite the whole disk with zeros/random
+    (re.compile(r"\b(?:cat|dd)\s+.*/dev/(?:zero|u?random)\s*.*of=/dev/", re.I),
+     "Overwriting a disk with zero/random data"),
 ]
 
 
@@ -142,3 +180,48 @@ def is_command_blocked(command: str) -> tuple[bool, str]:
         return True, scope_reason
         
     return False, ""
+
+
+# Commands that are legitimate but impactful enough to always need a human OK,
+# even when "auto-run safe commands" mode is enabled. (Blocked commands never run.)
+_CONFIRM_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\b(rm|rmdir|shred|unlink)\b", re.I), "Deletes files"),
+    (re.compile(r"\bdd\b", re.I), "Raw disk/file write (dd)"),
+    (re.compile(r"\b(mkfs\w*|mke2fs|fdisk|sfdisk|parted|gparted|wipefs|mkswap)\b", re.I), "Disk/partition operation"),
+    (re.compile(r"\b(kill|pkill|killall)\b", re.I), "Terminates processes"),
+    (re.compile(r"\bsystemctl\s+(stop|disable|mask|restart|reload)\b", re.I), "Changes a system service"),
+    (re.compile(r"\bservice\s+\S+\s+(stop|restart|reload)\b", re.I), "Changes a system service"),
+    (re.compile(r"\b(ip6?tables)\b.*\s-(A|I|D|F|X|P|N)\b", re.I), "Modifies firewall rules"),
+    (re.compile(r"\bufw\s+(enable|disable|allow|deny|reset|delete)\b", re.I), "Modifies firewall (ufw)"),
+    (re.compile(r"\bnft\b.*\b(add|delete|flush)\b", re.I), "Modifies nftables"),
+    (re.compile(r"\b(useradd|userdel|usermod|groupadd|groupdel|chpasswd|adduser|deluser)\b", re.I), "User/group/credential change"),
+    (re.compile(r"(?<![\w/.\-])passwd\b", re.I), "Changes a password"),
+    (re.compile(r"\bchmod\s+-R\b", re.I), "Recursive permission change"),
+    (re.compile(r"\bchown\s+-R\b", re.I), "Recursive ownership change"),
+    (re.compile(r"\b(mount|umount)\b", re.I), "Mounts/unmounts a filesystem"),
+    (re.compile(r"\bapt(-get)?\s+(remove|purge|autoremove)\b", re.I), "Removes system packages"),
+    (re.compile(r"\bdpkg\s+(-r|--remove|-P|--purge)\b", re.I), "Removes system packages"),
+    (re.compile(r"\bcrontab\s+-e\b", re.I), "Edits scheduled jobs"),
+    (re.compile(r"\btruncate\b", re.I), "Truncates a file"),
+    (re.compile(r"\b(insmod|rmmod)\b|\bmodprobe\s+-r\b", re.I), "Kernel module change"),
+]
+
+
+def requires_confirmation(command: str) -> tuple[bool, str]:
+    """Return (True, reason) for impactful-but-legit commands that still need approval."""
+    stripped = command.strip()
+    for pat, description in _CONFIRM_PATTERNS:
+        if pat.search(stripped):
+            return True, description
+    return False, ""
+
+
+def classify_command(command: str) -> tuple[str, str]:
+    """Classify a command: 'blocked' | 'confirm' | 'auto', with a reason."""
+    blocked, reason = is_command_blocked(command)
+    if blocked:
+        return "blocked", reason
+    needs, reason = requires_confirmation(command)
+    if needs:
+        return "confirm", reason
+    return "auto", ""

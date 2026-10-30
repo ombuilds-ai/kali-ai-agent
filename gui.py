@@ -12,29 +12,36 @@ from PyQt6.QtWidgets import (
     QPushButton, QScrollArea, QSizePolicy, QSplitter, QTextEdit,
     QTextBrowser, QVBoxLayout, QWidget, QFileDialog, QGraphicsDropShadowEffect,
     QFormLayout, QGroupBox, QSpacerItem, QGridLayout, QPlainTextEdit,
-    QTableWidget, QTableWidgetItem, QHeaderView, QMenu
+    QTableWidget, QTableWidgetItem, QHeaderView, QMenu, QInputDialog
 )
 
 from ai_engine import AIEngine
 from config import load_config, save_config
-from executor import run_bash, run_gui_action
-from guardrails import set_allowed_target_scopes, get_allowed_target_scopes
+from executor import run_bash, resume_bash, run_gui_action, get_screen_size, ExecutionResult
+from guardrails import set_allowed_target_scopes, get_allowed_target_scopes, classify_command
 from sessions import load_all_sessions, save_all_sessions, delete_session_by_id
+from shell_session import get_shell
+from jobs import get_job_manager
+from ghidra import get_ghidra
+import tools
+import memory
 
 # ── Sleek Modern Palette ────────────────────────────────────────────────────────
-BG_DARK = "#090d14"      # Main Canvas
-BG_SIDEBAR = "#101622"   # Left Navigation Sidebar
-BG_TERMINAL = "#070a10"  # Dedicated Terminal Output Panel
-BG_CARD = "#161e2c"      # Assistant Response Cards
-BG_USER = "#1b2738"      # User Message Bubbles
-BG_INPUT = "#131b28"     # Compact Floating Input Bar
-BORDER_COLOR = "#232d3f" # Subtle Borders
-ACCENT_BLUE = "#3b82f6"  # Primary Action Blue
-ACCENT_GREEN = "#10b981" # Emerald Success
-ACCENT_RED = "#ef4444"   # Red Danger
-ACCENT_AMBER = "#f59e0b" # Warning Gold
-TEXT_PRIMARY = "#f8fafc" # Bright Primary Text
-TEXT_MUTED = "#8b949e"   # Secondary Muted Text
+# ── Cyber-Glass Palette (v3.0) ──────────────────────────────────────────────────
+BG_DARK = "#0a0b14"       # Main canvas (deep space)
+BG_SIDEBAR = "#0d0e1a"    # Left navigation rail
+BG_TERMINAL = "#06070f"   # Terminal output panel
+BG_CARD = "#151724"       # Assistant glass cards
+BG_USER = "#1c1740"       # User message bubbles (violet tint)
+BG_INPUT = "#111322"      # Floating input bar
+BORDER_COLOR = "#23263a"  # Subtle borders
+ACCENT_BLUE = "#7c5cff"   # Primary accent (electric violet) — name kept for compat
+ACCENT_CYAN = "#22d3ee"   # Secondary accent (cyan)
+ACCENT_GREEN = "#2dd4bf"  # Success (teal)
+ACCENT_RED = "#fb5a6a"    # Danger
+ACCENT_AMBER = "#f5b14c"  # Warning
+TEXT_PRIMARY = "#eceefb"  # Primary text
+TEXT_MUTED = "#8b8fae"    # Muted text
 
 STYLE = f"""
 QMainWindow {{
@@ -47,62 +54,67 @@ QWidget {{
     font-size: 13px;
     color: {TEXT_PRIMARY};
 }}
-QScrollArea {{
-    border: none;
-    background: transparent;
-}}
-QScrollArea > QWidget > QWidget {{
-    background: transparent;
-}}
-QScrollBar:vertical {{
-    background: transparent;
-    width: 6px;
-    border-radius: 3px;
-}}
-QScrollBar::handle:vertical {{
-    background: #232d3f;
-    min-height: 24px;
-    border-radius: 3px;
-}}
-QScrollBar::handle:vertical:hover {{
-    background: #3b4968;
-}}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-    height: 0px;
-}}
+QScrollArea {{ border: none; background: transparent; }}
+QScrollArea > QWidget > QWidget {{ background: transparent; }}
+QScrollBar:vertical {{ background: transparent; width: 9px; margin: 2px; }}
+QScrollBar::handle:vertical {{ background: #2a2d45; min-height: 28px; border-radius: 4px; }}
+QScrollBar::handle:vertical:hover {{ background: {ACCENT_BLUE}; }}
+QScrollBar:horizontal {{ background: transparent; height: 9px; margin: 2px; }}
+QScrollBar::handle:horizontal {{ background: #2a2d45; min-width: 28px; border-radius: 4px; }}
+QScrollBar::handle:horizontal:hover {{ background: {ACCENT_BLUE}; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ height: 0px; width: 0px; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 QPushButton {{
-    border-radius: 7px;
-    padding: 5px 11px;
+    border-radius: 9px;
+    padding: 7px 13px;
     font-weight: 600;
-    background-color: #172030;
+    background-color: rgba(255, 255, 255, 0.04);
     border: 1px solid {BORDER_COLOR};
-    color: {TEXT_PRIMARY};
+    color: #d8dbf0;
 }}
 QPushButton:hover {{
-    background-color: #232f45;
-    border-color: #3b82f6;
-}}
-QPushButton:pressed {{
-    background-color: #101724;
-}}
-QLineEdit, QComboBox {{
-    background-color: #0d131f;
-    border: 1px solid {BORDER_COLOR};
-    border-radius: 7px;
-    padding: 6px 10px;
+    background-color: rgba(124, 92, 255, 0.14);
+    border-color: {ACCENT_BLUE};
     color: {TEXT_PRIMARY};
 }}
-QLineEdit:focus, QComboBox:focus {{
-    border: 1px solid {ACCENT_BLUE};
+QPushButton:pressed {{ background-color: rgba(124, 92, 255, 0.08); }}
+QLineEdit, QComboBox {{
+    background-color: #0c0e1a;
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 9px;
+    padding: 7px 11px;
+    color: {TEXT_PRIMARY};
+    selection-background-color: {ACCENT_BLUE};
 }}
-QComboBox::drop-down {{
-    border: none;
-    width: 20px;
+QLineEdit:focus, QComboBox:focus {{ border: 1px solid {ACCENT_BLUE}; }}
+QComboBox::drop-down {{ border: none; width: 22px; }}
+QComboBox QAbstractItemView {{
+    background: #12131f;
+    color: {TEXT_PRIMARY};
+    selection-background-color: rgba(124, 92, 255, 0.25);
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 8px;
+    padding: 4px;
+    outline: none;
 }}
-QSplitter::handle {{
-    background-color: {BORDER_COLOR};
-    width: 2px;
+QCheckBox {{ color: {TEXT_MUTED}; font-size: 11px; spacing: 7px; }}
+QCheckBox::indicator {{
+    width: 15px; height: 15px; border-radius: 5px;
+    border: 1px solid {BORDER_COLOR}; background: #0c0e1a;
 }}
+QCheckBox::indicator:checked {{ background: {ACCENT_BLUE}; border-color: {ACCENT_BLUE}; }}
+QToolTip {{
+    background-color: #12131f; color: {TEXT_PRIMARY};
+    border: 1px solid {ACCENT_BLUE}; border-radius: 6px; padding: 5px 8px;
+}}
+QSplitter::handle {{ background-color: {BG_DARK}; width: 3px; }}
+QSplitter::handle:hover {{ background-color: {ACCENT_BLUE}; }}
+QMenu {{
+    background-color: #12131f; color: {TEXT_PRIMARY};
+    border: 1px solid {BORDER_COLOR}; border-radius: 8px; padding: 5px;
+}}
+QMenu::item {{ padding: 6px 18px; border-radius: 5px; }}
+QMenu::item:selected {{ background-color: rgba(124, 92, 255, 0.25); }}
 """
 
 def apply_shadow(widget: QWidget, blur=16, offset_y=4, alpha=120):
@@ -126,19 +138,19 @@ def _format_message_html(text: str, font_size: Optional[int] = None) -> str:
         lang = match.group(1) or "bash"
         code = match.group(2).strip()
         return f'''
-        <div style="background-color: #070a10; border: 1px solid #1f2937; border-radius: 8px; margin: 8px 0; overflow: hidden;">
-            <div style="background-color: #0f172a; padding: 4px 10px; font-family: Consolas, monospace; font-size: {code_size - 1}px; color: #64748b; border-bottom: 1px solid #1f2937;">
-                ⚡ {lang}
+        <div style="background-color: #0b0d18; border: 1px solid #262a40; border-radius: 10px; margin: 8px 0; overflow: hidden;">
+            <div style="background-color: #141627; padding: 5px 11px; font-family: Consolas, monospace; font-size: {code_size - 1}px; color: #9aa0c4; border-bottom: 1px solid #262a40;">
+                &#9889; {lang}
             </div>
-            <pre style="padding: 10px; margin: 0; font-family: Consolas, monospace; font-size: {code_size}px; color: #e2e8f0; line-height: 1.4;"><code>{code}</code></pre>
+            <pre style="padding: 11px; margin: 0; font-family: Consolas, monospace; font-size: {code_size}px; color: #d8dbf0; line-height: 1.45;"><code>{code}</code></pre>
         </div>
         '''
     text = re.sub(r'```([\w\+\-\.]*)?\n(.*?)```', code_block_replacer, text, flags=re.DOTALL)
-    text = re.sub(r'`(.*?)`', f'<code style="background-color: #1e293b; padding: 2px 5px; border-radius: 4px; font-family: Consolas, monospace; color: #60a5fa; font-size: {code_size}px;">\\1</code>', text)
-    text = re.sub(r'\*\*(.*?)\*\*', r'<strong style="color: #f8fafc;">\1</strong>', text)
-    text = re.sub(r'\[IMG:(.*?)\]', r'<br><img src="file:///\1" style="max-width: 380px; border-radius: 8px; margin: 6px 0;"><br>', text)
+    text = re.sub(r'`(.*?)`', f'<code style="background-color: #1a1c2e; padding: 2px 6px; border-radius: 5px; font-family: Consolas, monospace; color: #a78bfa; font-size: {code_size}px;">\\1</code>', text)
+    text = re.sub(r'\*\*(.*?)\*\*', r'<strong style="color: #ffffff;">\1</strong>', text)
+    text = re.sub(r'\[IMG:(.*?)\]', r'<br><img src="file:///\1" style="max-width: 380px; border-radius: 10px; margin: 6px 0;"><br>', text)
     
-    parts = text.split('<div style="background-color: #070a10;')
+    parts = text.split('<div style="background-color: #0b0d18;')
     for i in range(len(parts)):
         if i == 0:
             parts[i] = parts[i].replace('\n', '<br>')
@@ -177,17 +189,40 @@ class AIWorker(QThread):
             self.error_occurred.emit(str(e))
 
 
+class CommandWorker(QThread):
+    """Runs an execution func OFF the GUI thread, streaming output chunks as they arrive.
+
+    `func` takes an on_output callback and returns an ExecutionResult, e.g.
+    `lambda cb: run_bash(command, on_output=cb)` or
+    `lambda cb: resume_bash(input_text, on_output=cb)`.
+    """
+    output_chunk = pyqtSignal(str)
+    finished_result = pyqtSignal(object)
+
+    def __init__(self, func):
+        super().__init__()
+        self._func = func
+
+    def run(self):
+        try:
+            res = self._func(lambda c: self.output_chunk.emit(c))
+        except Exception as e:
+            res = ExecutionResult(success=False, stderr=f"Execution error: {e}")
+        self.finished_result.emit(res)
+
+
 class ModelFetchWorker(QThread):
     models_ready = pyqtSignal(list)
     fetch_failed = pyqtSignal(str)
 
-    def __init__(self, engine: AIEngine):
+    def __init__(self, engine: AIEngine, merged: bool = False):
         super().__init__()
         self.engine = engine
+        self.merged = merged  # True = models from BOTH providers combined
 
     def run(self):
         try:
-            models = self.engine.get_available_models()
+            models = self.engine.get_merged_models() if self.merged else self.engine.get_available_models()
             self.models_ready.emit(models)
         except Exception as e:
             self.fetch_failed.emit(str(e))
@@ -197,7 +232,7 @@ class ModelFetchWorker(QThread):
 class PlanTrackerWidget(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet(f"QFrame {{ background: #0c121e; border-bottom: 1px solid {BORDER_COLOR}; padding: 4px 8px; }}")
+        self.setStyleSheet(f"QFrame {{ background: rgba(124, 92, 255, 0.05); border-bottom: 1px solid {BORDER_COLOR}; padding: 4px 8px; }}")
         
         self.layout = QHBoxLayout(self)
         self.layout.setContentsMargins(10, 4, 10, 4)
@@ -437,6 +472,15 @@ class SettingsDialog(QDialog):
         openai_layout.addRow("Base URL:", self.openai_url)
         openai_layout.addRow("API Key:", self.openai_key)
         openai_layout.addRow("Model:", self.openai_model)
+
+        extras = QHBoxLayout()
+        self.btn_openrouter_preset = QPushButton("🆓 Use OpenRouter")
+        self.btn_openrouter_preset.setToolTip("Set the base URL to OpenRouter and show free models")
+        self.btn_openrouter_preset.setStyleSheet(f"font-size: 11px; padding: 4px 10px; background: #172030; color: {ACCENT_CYAN};")
+        self.btn_openrouter_preset.clicked.connect(self._use_openrouter_preset)
+        extras.addWidget(self.btn_openrouter_preset)
+        extras.addStretch()
+        openai_layout.addRow("", extras)
         layout.addWidget(self.openai_group)
         
         self.gemini_group = QGroupBox("Google Gemini Settings")
@@ -455,6 +499,13 @@ class SettingsDialog(QDialog):
         gemini_layout.addRow("API Key:", self.gemini_key)
         gemini_layout.addRow("Model:", self.gemini_model)
         layout.addWidget(self.gemini_group)
+
+        # Free-models filter applies to BOTH providers, so it lives outside the groups.
+        self.free_only_chk = QCheckBox("🆓 Show FREE models only (Gemini flash/gemma + OpenRouter :free)")
+        self.free_only_chk.setChecked(bool(self.config.get("free_models_only", False)))
+        self.free_only_chk.setToolTip("Lists only no-cost models for whichever provider you use.")
+        self.free_only_chk.setStyleSheet(f"color: {ACCENT_GREEN}; font-size: 11px; font-weight: 600;")
+        layout.addWidget(self.free_only_chk)
         
         self._on_provider_changed(self.provider_combo.currentText())
         
@@ -466,10 +517,21 @@ class SettingsDialog(QDialog):
         self.openai_key.textChanged.connect(lambda: self.fetch_timer.start())
         self.openai_url.textChanged.connect(lambda: self.fetch_timer.start())
         self.gemini_key.textChanged.connect(lambda: self.fetch_timer.start())
+        self.free_only_chk.toggled.connect(lambda: self.fetch_timer.start())
         
         if self.openai_key.text().strip() or self.gemini_key.text().strip():
             QTimer.singleShot(300, self._auto_fetch_models)
         
+        self.operator_chk = QCheckBox("⚡ Operator Mode — never refuse authorized security tasks")
+        self.operator_chk.setChecked(bool(self.config.get("operator_mode", True)))
+        self.operator_chk.setToolTip(
+            "When ON, the agent treats every request as authorized engagement work and will not "
+            "refuse / moralize on legitimate offensive-security tasks. Target-scope and self-destruction "
+            "guardrails still apply."
+        )
+        self.operator_chk.setStyleSheet(f"color: {ACCENT_AMBER}; font-size: 11px; font-weight: 600;")
+        layout.addWidget(self.operator_chk)
+
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
@@ -493,6 +555,16 @@ class SettingsDialog(QDialog):
         
         layout.addLayout(btn_layout)
 
+    def _use_openrouter_preset(self):
+        """One click: switch to OpenRouter + free models, so pasting a key lists free models."""
+        self.provider_combo.setCurrentText("openai")
+        self.openai_url.setText("https://openrouter.ai/api/v1")
+        self.free_only_chk.setChecked(True)
+        self.status_label.setText("OpenRouter selected. Paste your API key to auto-list free models.")
+        self.status_label.setStyleSheet(f"color: {ACCENT_CYAN};")
+        if self.openai_key.text().strip():
+            self.fetch_timer.start()
+
     def _on_provider_changed(self, provider: str):
         self.openai_group.setVisible(provider == "openai")
         self.gemini_group.setVisible(provider == "gemini")
@@ -515,6 +587,7 @@ class SettingsDialog(QDialog):
                 gemini_key=self.gemini_key.text().strip(),
                 gemini_model=self.gemini_model.currentText().strip()
             )
+            self.engine.free_models_only = self.free_only_chk.isChecked()
             self.worker = ModelFetchWorker(self.engine)
             self.worker.models_ready.connect(self._on_models_fetched)
             self.worker.fetch_failed.connect(self._on_models_failed)
@@ -537,6 +610,7 @@ class SettingsDialog(QDialog):
                 gemini_key=self.gemini_key.text().strip(),
                 gemini_model=self.gemini_model.currentText().strip()
             )
+            self.engine.free_models_only = self.free_only_chk.isChecked()
             self.worker = ModelFetchWorker(self.engine)
             self.worker.models_ready.connect(self._on_models_fetched)
             self.worker.fetch_failed.connect(self._on_models_failed)
@@ -589,6 +663,8 @@ class SettingsDialog(QDialog):
         self.config["openai_model"] = self.openai_model.currentText().strip()
         self.config["gemini_api_key"] = self.gemini_key.text().strip()
         self.config["gemini_model"] = self.gemini_model.currentText().strip()
+        self.config["operator_mode"] = self.operator_chk.isChecked()
+        self.config["free_models_only"] = self.free_only_chk.isChecked()
         save_config(self.config)
         super().accept()
 
@@ -769,21 +845,30 @@ class ChatBubble(QFrame):
         
         if role == "user":
             role_label.setText("👤 You")
-            role_label.setStyleSheet(f"color: {ACCENT_BLUE}; font-weight: bold;")
-            bubble_box.setStyleSheet(f"QFrame {{ background-color: {BG_USER}; border: 1px solid #28374d; border-radius: 12px; }}")
+            role_label.setStyleSheet(f"color: {ACCENT_CYAN}; font-weight: bold;")
+            bubble_box.setStyleSheet(
+                "QFrame { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+                "stop:0 #221a4d, stop:1 #171232); border: 1px solid #332a66; border-radius: 14px; }"
+            )
             bubble_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
             main_h_layout.addStretch(1)
             main_h_layout.addWidget(bubble_box, 3)
         elif role == "assistant":
             role_label.setText("🐉 Kali-AI Agent")
             role_label.setStyleSheet(f"color: {ACCENT_GREEN}; font-weight: bold;")
-            bubble_box.setStyleSheet("QFrame { background: transparent; border: none; padding: 0; }")
+            bubble_box.setStyleSheet(
+                f"QFrame {{ background-color: {BG_CARD}; border: 1px solid {BORDER_COLOR}; "
+                f"border-left: 2px solid {ACCENT_BLUE}; border-radius: 12px; }}"
+            )
             bubble_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
             main_h_layout.addWidget(bubble_box, 1)
         else: # system
             role_label.setText("⚡ Execution Notice")
             role_label.setStyleSheet(f"color: {ACCENT_AMBER}; font-weight: bold;")
-            bubble_box.setStyleSheet("QFrame { background: transparent; border: none; padding: 0; }")
+            bubble_box.setStyleSheet(
+                f"QFrame {{ background-color: rgba(245, 177, 76, 0.06); border: 1px solid rgba(245, 177, 76, 0.25); "
+                f"border-left: 2px solid {ACCENT_AMBER}; border-radius: 10px; }}"
+            )
             bubble_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
             main_h_layout.addWidget(bubble_box, 1)
             
@@ -791,12 +876,18 @@ class ChatBubble(QFrame):
         
         if role == "assistant" and confidence_score is not None:
             conf_badge = QLabel(f"🎯 {confidence_score}%")
-            conf_badge.setStyleSheet("background: #0d1522; border: 1px solid #1e2d45; color: #60a5fa; border-radius: 8px; padding: 1px 6px; font-size: 10px; font-weight: 600;")
+            conf_badge.setStyleSheet(
+                f"background: rgba(124, 92, 255, 0.14); border: 1px solid rgba(124, 92, 255, 0.4); "
+                f"color: #b7a6ff; border-radius: 9px; padding: 2px 8px; font-size: 10px; font-weight: 700;"
+            )
             header_layout.addWidget(conf_badge)
             
             risk_color = ACCENT_GREEN if impact_risk == "Low" else (ACCENT_AMBER if impact_risk == "Medium" else ACCENT_RED)
-            risk_badge = QLabel(f"🛡️ Risk: {impact_risk or 'Low'}")
-            risk_badge.setStyleSheet(f"background: #0d1522; border: 1px solid #1e2d45; color: {risk_color}; border-radius: 8px; padding: 1px 6px; font-size: 10px; font-weight: 600;")
+            risk_badge = QLabel(f"🛡️ {impact_risk or 'Low'}")
+            risk_badge.setStyleSheet(
+                f"background: rgba(255, 255, 255, 0.04); border: 1px solid {risk_color}; "
+                f"color: {risk_color}; border-radius: 9px; padding: 2px 8px; font-size: 10px; font-weight: 700;"
+            )
             header_layout.addWidget(risk_badge)
 
         header_layout.addStretch()
@@ -819,7 +910,7 @@ class ChatBubble(QFrame):
         # Interactive Decision Option Buttons (if AI provided options)
         if options and isinstance(options, list):
             options_box = QFrame()
-            options_box.setStyleSheet(f"background: #0c1320; border: 1px solid {BORDER_COLOR}; border-radius: 8px; margin-top: 6px; padding: 6px;")
+            options_box.setStyleSheet(f"background: rgba(255,255,255,0.02); border: 1px solid {BORDER_COLOR}; border-radius: 10px; margin-top: 6px; padding: 6px;")
             opt_layout = QVBoxLayout(options_box)
             opt_layout.setContentsMargins(6, 6, 6, 6)
             opt_layout.setSpacing(6)
@@ -830,7 +921,12 @@ class ChatBubble(QFrame):
             
             for opt_text in options:
                 btn_opt = QPushButton(f"⚡ {opt_text}")
-                btn_opt.setStyleSheet(f"background: #172236; color: #60a5fa; border: 1px solid #283a59; border-radius: 6px; padding: 6px 10px; font-size: 11px; text-align: left; font-weight: 600;")
+                btn_opt.setStyleSheet(
+                    f"QPushButton {{ background: rgba(124, 92, 255, 0.08); color: #c4b8ff; "
+                    f"border: 1px solid rgba(124, 92, 255, 0.3); border-radius: 8px; padding: 8px 11px; "
+                    f"font-size: 11px; text-align: left; font-weight: 600; }}"
+                    f"QPushButton:hover {{ background: rgba(124, 92, 255, 0.18); border-color: {ACCENT_BLUE}; color: #ffffff; }}"
+                )
                 btn_opt.clicked.connect(lambda checked=False, t=opt_text: self.option_selected.emit(t))
                 opt_layout.addWidget(btn_opt)
                 
@@ -987,11 +1083,248 @@ class CompactInputTextEdit(QTextEdit):
         self.setFixedHeight(new_h)
 
 
+# ── Audit Log Viewer ────────────────────────────────────────────────────────────
+class AuditLogDialog(QDialog):
+    """Read-only viewer for the command audit trail (~/.config/kali-ai/audit.log)."""
+    _LOG_PATH = os.path.join(os.path.expanduser("~"), ".config", "kali-ai", "audit.log")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("📜 Command Audit Log")
+        self.setMinimumSize(640, 460)
+        self.setStyleSheet(STYLE + f"\nQDialog {{ background-color: {BG_SIDEBAR}; }}")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
+
+        title = QLabel("📜 Command Audit Log")
+        title.setStyleSheet("font-size: 16px; font-weight: 700; color: #f8fafc;")
+        layout.addWidget(title)
+
+        sub = QLabel(f"Every executed and blocked command, recorded at:\n{self._LOG_PATH}")
+        sub.setStyleSheet(f"font-size: 10px; color: {TEXT_MUTED};")
+        sub.setWordWrap(True)
+        layout.addWidget(sub)
+
+        self.view = QPlainTextEdit()
+        self.view.setReadOnly(True)
+        self.view.setStyleSheet(
+            f"QPlainTextEdit {{ background-color: #04070c; border: 1px solid {BORDER_COLOR}; "
+            f"border-radius: 8px; padding: 8px; font-family: Consolas, monospace; "
+            f"font-size: 11px; color: #9fb4c9; }}"
+        )
+        layout.addWidget(self.view)
+
+        btn_row = QHBoxLayout()
+        btn_refresh = QPushButton("🔄 Refresh")
+        btn_refresh.clicked.connect(self._load)
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(self.accept)
+        btn_row.addWidget(btn_refresh)
+        btn_row.addStretch()
+        btn_row.addWidget(btn_close)
+        layout.addLayout(btn_row)
+
+        self._load()
+
+    def _load(self):
+        try:
+            with open(self._LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            # Show the most recent entries last; cap to the last ~1000 lines.
+            lines = content.splitlines()
+            if len(lines) > 1000:
+                lines = ["[... older entries truncated ...]"] + lines[-1000:]
+            self.view.setPlainText("\n".join(lines) if lines else "(audit log is empty)")
+            self.view.verticalScrollBar().setValue(self.view.verticalScrollBar().maximum())
+        except FileNotFoundError:
+            self.view.setPlainText("(no audit log yet — run a command first)")
+        except Exception as exc:
+            self.view.setPlainText(f"(could not read audit log: {exc})")
+
+
+# ── Learned-Memory Viewer ──────────────────────────────────────────────────────
+class MemoryDialog(QDialog):
+    """Shows what the agent has learned, with an option to reset it."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("🧠 Agent Memory & Self-Learning")
+        self.setMinimumSize(620, 480)
+        self.setStyleSheet(STYLE + f"\nQDialog {{ background-color: {BG_SIDEBAR}; }}")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
+
+        title = QLabel("🧠 Agent Memory & Self-Learning")
+        title.setStyleSheet("font-size: 16px; font-weight: 700; color: #f8fafc;")
+        layout.addWidget(title)
+
+        sub = QLabel("Corrections, preferences, tool success rates and workflows the agent "
+                     "has learned. This is injected into every prompt so it keeps improving.")
+        sub.setStyleSheet(f"font-size: 10px; color: {TEXT_MUTED};")
+        sub.setWordWrap(True)
+        layout.addWidget(sub)
+
+        self.view = QPlainTextEdit()
+        self.view.setReadOnly(True)
+        self.view.setStyleSheet(
+            f"QPlainTextEdit {{ background-color: #0d131f; border: 1px solid {BORDER_COLOR}; "
+            f"border-radius: 8px; padding: 10px; font-family: Consolas, monospace; "
+            f"font-size: 11px; color: #9fd0b0; }}"
+        )
+        layout.addWidget(self.view)
+
+        btn_row = QHBoxLayout()
+        btn_refresh = QPushButton("🔄 Refresh")
+        btn_refresh.clicked.connect(self._load)
+        btn_reset = QPushButton("🗑 Reset Memory")
+        btn_reset.setStyleSheet(f"background: #261616; color: {ACCENT_RED}; border-color: #4d2222;")
+        btn_reset.clicked.connect(self._reset)
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(self.accept)
+        btn_row.addWidget(btn_refresh)
+        btn_row.addWidget(btn_reset)
+        btn_row.addStretch()
+        btn_row.addWidget(btn_close)
+        layout.addLayout(btn_row)
+
+        self._load()
+
+    def _load(self):
+        try:
+            self.view.setPlainText(memory.get_memory_summary_for_ai().strip() or "(nothing learned yet)")
+        except Exception as exc:
+            self.view.setPlainText(f"(could not read memory: {exc})")
+
+    def _reset(self):
+        confirm = QMessageBox.question(
+            self, "Reset Memory",
+            "Erase ALL learned corrections, preferences, tool stats and workflows?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm == QMessageBox.StandardButton.Yes:
+            try:
+                memory.reset_memory()
+            except Exception:
+                pass
+            self._load()
+
+
+# ── Background Jobs Panel ───────────────────────────────────────────────────────
+class JobsDialog(QDialog):
+    """Live view of background jobs with per-job output & stop controls."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("⚙ Background Jobs")
+        self.setMinimumSize(720, 520)
+        self.setStyleSheet(STYLE + f"\nQDialog {{ background-color: {BG_SIDEBAR}; }}")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
+
+        header = QHBoxLayout()
+        title = QLabel("⚙ Background Jobs")
+        title.setStyleSheet("font-size: 16px; font-weight: 700; color: #f8fafc;")
+        header.addWidget(title)
+        header.addStretch()
+        btn_refresh = QPushButton("🔄 Refresh")
+        btn_refresh.clicked.connect(self._refresh)
+        header.addWidget(btn_refresh)
+        layout.addLayout(header)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["ID", "Status", "Age(s)", "Command", "Actions"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setStyleSheet(
+            f"QTableWidget {{ background-color: #0c121e; border: 1px solid {BORDER_COLOR}; "
+            f"gridline-color: #1e293b; border-radius: 8px; color: #f8fafc; }}"
+            f"QHeaderView::section {{ background-color: #101622; color: #94a3b8; font-weight: bold; "
+            f"font-size: 11px; border: 1px solid #1e293b; padding: 6px; }}"
+        )
+        layout.addWidget(self.table, stretch=2)
+
+        out_lbl = QLabel("Selected job output:")
+        out_lbl.setStyleSheet(f"font-size: 11px; color: {TEXT_MUTED};")
+        layout.addWidget(out_lbl)
+
+        self.output_view = QPlainTextEdit()
+        self.output_view.setReadOnly(True)
+        self.output_view.setStyleSheet(
+            f"QPlainTextEdit {{ background-color: #04070c; border: 1px solid #1a2333; border-radius: 8px; "
+            f"padding: 8px; font-family: Consolas, monospace; font-size: 11px; color: #4ade80; }}"
+        )
+        layout.addWidget(self.output_view, stretch=1)
+
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(self.accept)
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(btn_close)
+        layout.addLayout(row)
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(2000)
+        self._timer.timeout.connect(self._refresh)
+        self._timer.start()
+        self._refresh()
+
+    def _refresh(self):
+        jobs = get_job_manager().snapshot()
+        self.table.setRowCount(0)
+        for idx, job in enumerate(jobs):
+            self.table.insertRow(idx)
+            self.table.setItem(idx, 0, QTableWidgetItem(f"#{job['id']}"))
+            status_item = QTableWidgetItem(job["status"])
+            status_item.setForeground(QColor(ACCENT_BLUE if job["status"] == "running" else TEXT_MUTED))
+            self.table.setItem(idx, 1, status_item)
+            self.table.setItem(idx, 2, QTableWidgetItem(str(job["duration"])))
+            self.table.setItem(idx, 3, QTableWidgetItem(job["command"]))
+
+            cell = QWidget()
+            cl = QHBoxLayout(cell)
+            cl.setContentsMargins(2, 2, 2, 2)
+            cl.setSpacing(4)
+            btn_out = QPushButton("📄 Output")
+            btn_out.setStyleSheet("font-size: 10px; padding: 2px 6px; background: #1a273d; color: #60a5fa;")
+            btn_out.clicked.connect(lambda _c=False, jid=job["id"]: self._show_output(jid))
+            cl.addWidget(btn_out)
+            if job["status"] == "running":
+                btn_stop = QPushButton("⏹ Stop")
+                btn_stop.setStyleSheet(f"font-size: 10px; padding: 2px 6px; background: #261616; color: {ACCENT_RED};")
+                btn_stop.clicked.connect(lambda _c=False, jid=job["id"]: self._stop(jid))
+                cl.addWidget(btn_stop)
+            self.table.setCellWidget(idx, 4, cell)
+
+        if not jobs:
+            self.output_view.setPlainText("(no background jobs)")
+
+    def _show_output(self, jid: int):
+        self.output_view.setPlainText(get_job_manager().output(jid))
+        self.output_view.verticalScrollBar().setValue(self.output_view.verticalScrollBar().maximum())
+
+    def _stop(self, jid: int):
+        get_job_manager().stop(jid)
+        self._refresh()
+
+    def closeEvent(self, event):
+        self._timer.stop()
+        event.accept()
+
+
 # ── Main Application Window ─────────────────────────────────────────────────────
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Kali-AI Agent by Om | Autonomous Security Controller v2.0")
+        self.setWindowTitle("Kali-AI Agent by Om | Advanced Security Controller v3.0")
         self.resize(1320, 820)
         self.setStyleSheet(STYLE)
         
@@ -1004,6 +1337,16 @@ class MainWindow(QMainWindow):
         self._session_widgets = {} # {session_id: SessionHistoryButton}
         self._pending_steering_notes = [] # Mid-execution concurrent notes
         self._is_busy = False
+        self._auto_turn_count = 0      # consecutive autonomous turns in current task
+        self._auto_turn_limit = 25     # safety cap to stop runaway AI->command loops
+        self._stop_requested = False
+        self._last_user_text = ""      # last real user request (for memory learning)
+        self._awaiting_input = False   # a running command is paused at an interactive prompt
+        self._skip_ai_followup = False # suppress the AI loop after a manual user command
+        self._pending_cmd_timeout = None  # AI-requested timeout for the next command
+        self._vision_control = False   # Live Screen Control: watch screen + auto GUI control
+        self._normal_turn_limit = 25   # autonomous cap outside vision mode
+        self.cmd_worker = None
         
         config = load_config()
         self.font_size = config.get("font_size", 13)
@@ -1014,6 +1357,12 @@ class MainWindow(QMainWindow):
         self._load_history_from_disk()
         self._try_init_engine()
 
+        # Live background-jobs indicator in the top bar.
+        self._jobs_timer = QTimer(self)
+        self._jobs_timer.setInterval(2500)
+        self._jobs_timer.timeout.connect(self._update_jobs_indicator)
+        self._jobs_timer.start()
+
     def _setup_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -1023,8 +1372,12 @@ class MainWindow(QMainWindow):
         
         # ── LEFT SIDEBAR ────────────────────────────────────────────────────────
         self.sidebar = QFrame()
-        self.sidebar.setFixedWidth(220)
-        self.sidebar.setStyleSheet(f"background-color: {BG_SIDEBAR}; border-right: 1px solid {BORDER_COLOR};")
+        self.sidebar.setFixedWidth(230)
+        self.sidebar.setStyleSheet(
+            f"QFrame {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            f"stop:0 #11122a, stop:0.4 {BG_SIDEBAR}, stop:1 #0b0c16); "
+            f"border-right: 1px solid {BORDER_COLOR}; }}"
+        )
         sidebar_layout = QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(12, 14, 12, 14)
         sidebar_layout.setSpacing(8)
@@ -1055,19 +1408,19 @@ class MainWindow(QMainWindow):
         
         sidebar_layout.addLayout(header_box)
         
-        self.btn_new_chat = QPushButton("＋ New Conversation")
+        self.btn_new_chat = QPushButton("＋  New Conversation")
         self.btn_new_chat.setStyleSheet(f"""
             QPushButton {{
-                background-color: {ACCENT_BLUE};
-                color: white;
-                font-weight: 700;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {ACCENT_BLUE}, stop:1 {ACCENT_CYAN});
+                color: #0a0b14;
+                font-weight: 800;
                 font-size: 12px;
-                padding: 7px;
+                padding: 9px;
                 border: none;
-                border-radius: 7px;
+                border-radius: 10px;
             }}
             QPushButton:hover {{
-                background-color: #2563eb;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #8f72ff, stop:1 #4de2f5);
             }}
         """)
         self.btn_new_chat.clicked.connect(self._save_and_start_new_chat)
@@ -1110,10 +1463,25 @@ class MainWindow(QMainWindow):
         
         self.btn_export = QPushButton("📤 Export Log (.txt)")
         self.btn_export.clicked.connect(self._export_chat)
+
+        self.btn_audit = QPushButton("📜 Audit Log")
+        self.btn_audit.setToolTip("View the trail of every executed/blocked command")
+        self.btn_audit.clicked.connect(self._open_audit_log)
+
+        self.btn_memory = QPushButton("🧠 Agent Memory")
+        self.btn_memory.setToolTip("View / reset what the agent has learned")
+        self.btn_memory.clicked.connect(self._open_memory)
+
+        self.btn_ghidra = QPushButton("🧬 Connect Ghidra")
+        self.btn_ghidra.setToolTip("One-click: connect the agent to Ghidra for reverse engineering")
+        self.btn_ghidra.clicked.connect(self._connect_ghidra)
         
         sidebar_layout.addWidget(self.btn_settings)
         sidebar_layout.addWidget(self.btn_plugins)
         sidebar_layout.addWidget(self.btn_target_scope)
+        sidebar_layout.addWidget(self.btn_ghidra)
+        sidebar_layout.addWidget(self.btn_audit)
+        sidebar_layout.addWidget(self.btn_memory)
         sidebar_layout.addWidget(self.btn_clear)
         sidebar_layout.addWidget(self.btn_export)
         
@@ -1121,10 +1489,32 @@ class MainWindow(QMainWindow):
         options_lbl.setStyleSheet(f"font-size: 10px; color: {TEXT_MUTED}; font-weight: bold; letter-spacing: 1px; margin-top: 4px;")
         sidebar_layout.addWidget(options_lbl)
         
+        _chk_style = f"QCheckBox {{ color: {TEXT_MUTED}; font-size: 11px; }} QCheckBox::indicator {{ width: 13px; height: 13px; border-radius: 3px; border: 1px solid {BORDER_COLOR}; background: #0d131f; }} QCheckBox::indicator:checked {{ background: {ACCENT_BLUE}; border-color: {ACCENT_BLUE}; }}"
+
         self.chk_screenshot = QCheckBox("Auto Vision Screenshot")
         self.chk_screenshot.setChecked(False)
-        self.chk_screenshot.setStyleSheet(f"QCheckBox {{ color: {TEXT_MUTED}; font-size: 11px; }} QCheckBox::indicator {{ width: 13px; height: 13px; border-radius: 3px; border: 1px solid {BORDER_COLOR}; background: #0d131f; }} QCheckBox::indicator:checked {{ background: {ACCENT_BLUE}; border-color: {ACCENT_BLUE}; }}")
+        self.chk_screenshot.setStyleSheet(_chk_style)
         sidebar_layout.addWidget(self.chk_screenshot)
+
+        self.chk_autorun = QCheckBox("⚡ Auto-run safe commands")
+        self.chk_autorun.setChecked(False)
+        self.chk_autorun.setToolTip(
+            "When ON, read-only/safe commands run automatically.\n"
+            "Destructive or impactful commands (rm, dd, kill, firewall, user mgmt, ...) "
+            "still require your approval."
+        )
+        self.chk_autorun.setStyleSheet(_chk_style)
+        sidebar_layout.addWidget(self.chk_autorun)
+
+        self.chk_vision = QCheckBox("🖥 Live Screen Control")
+        self.chk_vision.setChecked(False)
+        self.chk_vision.setToolTip(
+            "When ON, the agent sees the live screen each step and controls the mouse & keyboard\n"
+            "itself (no per-click approval) to complete the task you give it. Click Stop (🟥) to halt."
+        )
+        self.chk_vision.setStyleSheet(_chk_style)
+        self.chk_vision.toggled.connect(self._toggle_vision_control)
+        sidebar_layout.addWidget(self.chk_vision)
         
         sidebar_layout.addStretch()
         
@@ -1137,7 +1527,7 @@ class MainWindow(QMainWindow):
         self.status_lbl.setStyleSheet(f"color: {ACCENT_RED}; font-size: 11px; font-weight: 600;")
         sb_layout.addWidget(self.status_lbl)
         
-        version_lbl = QLabel("v2.0 Autonomous Engine")
+        version_lbl = QLabel("v3.0 Advanced Engine")
         version_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px;")
         sb_layout.addWidget(version_lbl)
         
@@ -1155,8 +1545,12 @@ class MainWindow(QMainWindow):
         chat_layout.setSpacing(0)
         
         top_bar = QFrame()
-        top_bar.setFixedHeight(38)
-        top_bar.setStyleSheet(f"background-color: {BG_SIDEBAR}; border-bottom: 1px solid {BORDER_COLOR};")
+        top_bar.setFixedHeight(44)
+        top_bar.setStyleSheet(
+            f"QFrame {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            f"stop:0 #12132290, stop:1 {BG_DARK}); "
+            f"border-bottom: 1px solid rgba(124, 92, 255, 0.30); }}"
+        )
         tb_layout = QHBoxLayout(top_bar)
         tb_layout.setContentsMargins(10, 0, 10, 0)
         
@@ -1182,6 +1576,12 @@ class MainWindow(QMainWindow):
         self.btn_toggle_inventory.clicked.connect(self._toggle_inventory_view)
         tb_layout.addWidget(self.btn_toggle_inventory)
         
+        self.btn_jobs = QPushButton("⚙ Jobs")
+        self.btn_jobs.setToolTip("View & control background jobs")
+        self.btn_jobs.setStyleSheet(f"font-size: 11px; padding: 3px 8px; background: #172030; color: {TEXT_MUTED};")
+        self.btn_jobs.clicked.connect(self._open_jobs)
+        tb_layout.addWidget(self.btn_jobs)
+
         self.btn_toggle_terminal = QPushButton("💻 Terminal Log")
         self.btn_toggle_terminal.setToolTip("Toggle Right Terminal Window")
         self.btn_toggle_terminal.setStyleSheet(f"font-size: 11px; padding: 3px 10px; background: #172030; color: {ACCENT_GREEN}; border-color: #1e293b;")
@@ -1262,17 +1662,26 @@ class MainWindow(QMainWindow):
         
         self.input_card = QFrame()
         self.input_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-        self.input_card.setStyleSheet(f"""
+        self._input_card_style = f"""
             QFrame {{
                 background-color: {BG_INPUT};
-                border: 1px solid #232f45;
-                border-radius: 18px;
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 20px;
                 padding: 2px 4px;
             }}
             QFrame:focus-within {{
                 border-color: {ACCENT_BLUE};
             }}
-        """)
+        """
+        self._input_card_style_awaiting = f"""
+            QFrame {{
+                background-color: #1c1708;
+                border: 1px solid {ACCENT_AMBER};
+                border-radius: 18px;
+                padding: 2px 4px;
+            }}
+        """
+        self.input_card.setStyleSheet(self._input_card_style)
         
         ic_layout = QVBoxLayout(self.input_card)
         ic_layout.setContentsMargins(6, 3, 6, 3)
@@ -1329,9 +1738,13 @@ class MainWindow(QMainWindow):
         self.model_selector.currentTextChanged.connect(self._on_dashboard_model_changed)
         
         self.btn_send = QPushButton("▶")
-        self.btn_send.setFixedSize(30, 30)
+        self.btn_send.setFixedSize(32, 32)
         self.btn_send.setToolTip("Send Message")
-        self.btn_send.setStyleSheet(f"background: {ACCENT_BLUE}; color: white; font-weight: bold; border-radius: 15px; font-size: 11px; border: none;")
+        self.btn_send.setStyleSheet(
+            f"QPushButton {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {ACCENT_BLUE}, stop:1 {ACCENT_CYAN}); "
+            f"color: #0a0b14; font-weight: bold; border-radius: 16px; font-size: 12px; border: none; }}"
+            f"QPushButton:hover {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #8f72ff, stop:1 #4de2f5); }}"
+        )
         self.btn_send.clicked.connect(self._on_send)
         
         self.btn_stop = QPushButton("🟥")
@@ -1367,13 +1780,25 @@ class MainWindow(QMainWindow):
         term_header = QHBoxLayout()
         term_title = QLabel("💻 DEDICATED TERMINAL LOG")
         term_title.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {ACCENT_GREEN}; letter-spacing: 1px;")
-        
+
+        self.cwd_label = QLabel("📂 ~")
+        self.cwd_label.setToolTip("Current working directory of the persistent shell")
+        self.cwd_label.setStyleSheet(f"font-size: 10px; color: {TEXT_MUTED}; font-family: Consolas, monospace;")
+
+        self.btn_reset_shell = QPushButton("⟳ Reset Shell")
+        self.btn_reset_shell.setToolTip("Restart the persistent shell (clears cwd/env/state)")
+        self.btn_reset_shell.setStyleSheet(f"font-size: 10px; padding: 2px 6px; background: #121927; color: {ACCENT_AMBER};")
+        self.btn_reset_shell.clicked.connect(self._reset_shell)
+
         self.btn_clear_term = QPushButton("Clear")
         self.btn_clear_term.setStyleSheet("font-size: 10px; padding: 2px 6px; background: #121927;")
         self.btn_clear_term.clicked.connect(self._clear_terminal_output)
         
         term_header.addWidget(term_title)
+        term_header.addSpacing(8)
+        term_header.addWidget(self.cwd_label)
         term_header.addStretch()
+        term_header.addWidget(self.btn_reset_shell)
         term_header.addWidget(self.btn_clear_term)
         term_layout.addLayout(term_header)
         
@@ -1381,19 +1806,30 @@ class MainWindow(QMainWindow):
         self.terminal_log.setReadOnly(True)
         self.terminal_log.setStyleSheet(f"""
             QPlainTextEdit {{
-                background-color: #04070c;
-                border: 1px solid #1a2333;
-                border-radius: 8px;
-                padding: 8px;
+                background-color: #05060e;
+                border: 1px solid {BORDER_COLOR};
+                border-radius: 10px;
+                padding: 10px;
                 font-family: Consolas, monospace;
                 font-size: 11px;
-                color: #4ade80;
-                line-height: 1.4;
+                color: #5eead4;
+                line-height: 1.45;
             }}
         """)
-        self.terminal_log.appendPlainText("[*] Kali-AI Terminal Window Active.\n[*] Output logs will stream here in real-time...\n")
+        self.terminal_log.appendPlainText("[*] Kali-AI Terminal Window Active.\n[*] Output streams here live. You can also type commands below to run them directly.\n")
         term_layout.addWidget(self.terminal_log)
-        
+
+        # Manual command input — runs directly in the SAME persistent shell the AI uses.
+        self.manual_input = QLineEdit()
+        self.manual_input.setPlaceholderText("$ run a command directly (bypasses AI)…")
+        self.manual_input.setStyleSheet(
+            f"QLineEdit {{ background-color: #04070c; border: 1px solid #1a2333; border-radius: 6px; "
+            f"padding: 6px 8px; font-family: Consolas, monospace; font-size: 11px; color: #4ade80; }}"
+            f"QLineEdit:focus {{ border-color: {ACCENT_GREEN}; }}"
+        )
+        self.manual_input.returnPressed.connect(self._on_manual_command)
+        term_layout.addWidget(self.manual_input)
+
         self.main_splitter.addWidget(self.terminal_panel)
         self.main_splitter.setSizes([760, 420])
         
@@ -1419,6 +1855,13 @@ class MainWindow(QMainWindow):
         self.input_field.setPlainText(command_prompt)
         self._on_send()
 
+    def _apply_awaiting_style(self):
+        self.input_card.setStyleSheet(self._input_card_style_awaiting)
+        self.input_field.setPlaceholderText("⌨️ Process is waiting — type your answer and press Enter…")
+
+    def _clear_awaiting_style(self):
+        self.input_card.setStyleSheet(self._input_card_style)
+
     def _set_busy_state(self, is_busy: bool):
         self._is_busy = is_busy
         self.input_field.setReadOnly(False) # Always keep input unlocked for mid-execution steering notes!
@@ -1436,14 +1879,26 @@ class MainWindow(QMainWindow):
             self.corner_spinner.stop()
 
     def _stop_ai_execution(self):
-        """Immediately abort active AI thread, cancel background commands, and unlock UI."""
+        """Immediately abort active AI thread, cancel the running command, and unlock UI."""
+        self._stop_requested = True
+        self._auto_turn_count = self._auto_turn_limit + 1  # break the autonomous loop
+        self._awaiting_input = False
+        self._skip_ai_followup = False
+        self._clear_awaiting_style()
+
+        # Ctrl-C the currently running foreground command (shell stays alive).
+        try:
+            get_shell().interrupt()
+        except Exception:
+            pass
+
         if hasattr(self, 'worker') and self.worker and self.worker.isRunning():
             try:
                 self.worker.terminate()
                 self.worker.wait(500)
             except Exception:
                 pass
-                
+
         self.terminal_log.appendPlainText("\n[ABORTED] Active AI action/execution stopped by user.\n")
         self._add_bubble("system", "⏹ **AI Action Aborted**: Execution stopped by user.")
         self._terminal_output = None
@@ -1500,6 +1955,41 @@ class MainWindow(QMainWindow):
         self.terminal_log.clear()
         self.terminal_log.appendPlainText("[*] Terminal log cleared.\n")
 
+    def _on_manual_command(self):
+        """Run a command the user typed directly in the terminal panel's input."""
+        cmd = self.manual_input.text().strip()
+        if not cmd:
+            return
+        self.manual_input.clear()
+
+        # If a process is paused for input, route the text to it instead of running anew.
+        if self._awaiting_input:
+            self._awaiting_input = False
+            self._clear_awaiting_style()
+            self._add_bubble("user", f"⌨️ → process: {cmd}")
+            self._run_send_input(cmd)
+            return
+        if self._is_busy:
+            self.terminal_log.appendPlainText("\n[BUSY] Wait for the current action to finish.\n")
+            return
+
+        self.terminal_log.appendPlainText(f"\n$ {cmd}")
+        self._execute_command(cmd, manual=True, timeout=None)
+
+    def _reset_shell(self):
+        """Restart the persistent shell, clearing cwd/env/running state."""
+        try:
+            get_shell().restart()
+        except Exception as exc:
+            self.terminal_log.appendPlainText(f"\n[SHELL RESET FAILED] {exc}\n")
+            return
+        self._awaiting_input = False
+        self._skip_ai_followup = False
+        self._clear_awaiting_style()
+        self.terminal_log.appendPlainText("\n[SHELL RESET] Fresh persistent shell started (cwd/env/state cleared).\n")
+        self.cwd_label.setText("📂 ~")
+        self._set_busy_state(False)
+
     def _try_init_engine(self):
         config = load_config()
         provider = config.get("provider", "gemini")
@@ -1530,7 +2020,9 @@ class MainWindow(QMainWindow):
                 self.model_selector.setCurrentText(model_name)
                 self.model_selector.blockSignals(False)
                 
-                self.fetch_worker = ModelFetchWorker(self.engine)
+                self.engine.free_models_only = config.get("free_models_only", False)
+                # Dashboard dropdown lists models from BOTH configured providers.
+                self.fetch_worker = ModelFetchWorker(self.engine, merged=True)
                 self.fetch_worker.models_ready.connect(self._on_dashboard_models_ready)
                 self.fetch_worker.start()
                 
@@ -1557,18 +2049,44 @@ class MainWindow(QMainWindow):
     def _on_dashboard_model_changed(self, new_model: str):
         if not new_model or not self.engine:
             return
+        # Switch to the chosen model (provider inferred); shared transcript is preserved.
+        ok, msg = self.engine.set_active_model(new_model)
+        if not ok:
+            self._add_bubble("system", f"⚠️ {msg}")
+            return
         config = load_config()
-        provider = config.get("provider", "gemini")
-        config[f"{provider}_model"] = new_model
+        config["provider"] = self.engine.provider
+        if self.engine.provider == "gemini":
+            config["gemini_model"] = self.engine.gemini_model
+        else:
+            config["openai_model"] = self.engine.openai_model
         save_config(config)
-        self.engine.reconfigure(
-            provider=provider,
-            openai_key=config.get("openai_api_key", ""),
-            openai_url=config.get("openai_base_url", "https://openrouter.ai/api/v1"),
-            openai_model=config.get("openai_model", ""),
-            gemini_key=config.get("gemini_api_key", ""),
-            gemini_model=config.get("gemini_model", "")
-        )
+        self.status_lbl.setText(f"● {self.engine.provider.upper()} | {new_model}")
+        self.status_lbl.setStyleSheet(f"color: {ACCENT_GREEN}; font-size: 11px; font-weight: 600;")
+
+    def _apply_model_switch(self, model_id: str):
+        """Handle an AI-requested model switch (switch_model field)."""
+        if not self.engine or not model_id:
+            return
+        ok, msg = self.engine.set_active_model(model_id)
+        if not ok:
+            self._add_bubble("system", f"⚠️ Could not switch model: {msg}")
+            return
+        self.model_selector.blockSignals(True)
+        if self.model_selector.findText(model_id) == -1:
+            self.model_selector.addItem(model_id)
+        self.model_selector.setCurrentText(model_id)
+        self.model_selector.blockSignals(False)
+        config = load_config()
+        config["provider"] = self.engine.provider
+        if self.engine.provider == "gemini":
+            config["gemini_model"] = self.engine.gemini_model
+        else:
+            config["openai_model"] = self.engine.openai_model
+        save_config(config)
+        self.status_lbl.setText(f"● {self.engine.provider.upper()} | {model_id}")
+        self.status_lbl.setStyleSheet(f"color: {ACCENT_GREEN}; font-size: 11px; font-weight: 600;")
+        self._add_bubble("system", f"🔀 Switched to model: **{model_id}** (context preserved).")
 
     def _open_settings(self):
         dlg = SettingsDialog(self)
@@ -1578,6 +2096,64 @@ class MainWindow(QMainWindow):
     def _open_plugins_dialog(self):
         dlg = PluginManagerDialog(self)
         dlg.exec()
+
+    def _open_audit_log(self):
+        dlg = AuditLogDialog(self)
+        dlg.exec()
+
+    def _open_memory(self):
+        dlg = MemoryDialog(self)
+        dlg.exec()
+
+    def _open_jobs(self):
+        dlg = JobsDialog(self)
+        dlg.exec()
+
+    def _toggle_vision_control(self, on: bool):
+        """Enable/disable Live Screen Control (continuous vision + autonomous mouse/keyboard)."""
+        self._vision_control = on
+        if on:
+            self.chk_screenshot.setChecked(True)      # vision mode needs screenshots
+            self._auto_turn_limit = 80                # GUI tasks need many steps
+            if self.engine:
+                self.engine.screenshot_detail = "high"
+            w, h = get_screen_size()
+            self._add_bubble(
+                "system",
+                f"🖥 **Live Screen Control ON.** I can now see the live screen ({w}×{h}) and will move the "
+                f"mouse & type myself (no per-click approval) to do what you ask. Give me a task; press 🟥 Stop to halt.",
+            )
+        else:
+            self._auto_turn_limit = self._normal_turn_limit
+            if self.engine:
+                self.engine.screenshot_detail = "low"
+            self._add_bubble("system", "🖥 Live Screen Control OFF — back to normal (GUI actions need approval).")
+
+    def _vision_preamble(self) -> str:
+        w, h = get_screen_size()
+        return (
+            f"[LIVE SCREEN CONTROL] The attached image is the CURRENT screen. The screen is {w}x{h} pixels; "
+            f"any GUI coordinates you give MUST be absolute pixels within this space. Look at the screen, then "
+            f"choose the single next GUI action (action_type 'gui' with gui_action type click/doubleclick/"
+            f"rightclick/type/hotkey/scroll and x,y/text) to progress the task — or 'bash' if a shell command is "
+            f"better. When the task is fully complete, reply action_type 'chat' with task_complete=true.\n\n"
+        )
+
+    def _update_jobs_indicator(self):
+        try:
+            n = get_job_manager().running_count()
+        except Exception:
+            n = 0
+        if n > 0:
+            self.btn_jobs.setText(f"⚙ Jobs ({n})")
+            self.btn_jobs.setStyleSheet(
+                f"font-size: 11px; padding: 3px 8px; background: #172030; color: {ACCENT_GREEN}; font-weight: bold;"
+            )
+        else:
+            self.btn_jobs.setText("⚙ Jobs")
+            self.btn_jobs.setStyleSheet(
+                f"font-size: 11px; padding: 3px 8px; background: #172030; color: {TEXT_MUTED};"
+            )
 
     def _attach_image(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -1638,7 +2214,16 @@ class MainWindow(QMainWindow):
             return
             
         self.input_field.clear()
-        
+
+        # If a running command is paused at an interactive prompt, the user's text
+        # goes straight to that process (same persistent shell), not to the AI.
+        if self._awaiting_input and text:
+            self._awaiting_input = False
+            self._clear_awaiting_style()
+            self._add_bubble("user", f"⌨️ → process: {text}")
+            self._run_send_input(text)
+            return
+
         # Check if AI is currently executing a process
         if self._is_busy:
             self._add_bubble("user", f"💬 **Mid-Execution Note**: {text}")
@@ -1652,14 +2237,19 @@ class MainWindow(QMainWindow):
                 display_text += f"\n[IMG:{path}]"
                 
         self._add_bubble("user", display_text)
+        # Fresh user task: reset the autonomous-loop guard and stop flag.
+        self._auto_turn_count = 0
+        self._stop_requested = False
+        self._last_user_text = text
         self._set_busy_state(True)
         
         images_to_send = self._attached_images.copy() if has_images else None
-        
+        worker_text = (self._vision_preamble() + text) if self._vision_control else text
+
         self.worker = AIWorker(
             engine=self.engine,
-            user_text=text,
-            attach_screenshot=self.chk_screenshot.isChecked(),
+            user_text=worker_text,
+            attach_screenshot=self.chk_screenshot.isChecked() or self._vision_control,
             terminal_output=self._terminal_output,
             image_paths=images_to_send
         )
@@ -1687,16 +2277,189 @@ class MainWindow(QMainWindow):
             
         display = response_text or thought or "(No response message provided)"
         self._add_bubble("assistant", display, confidence_score=confidence, impact_risk=risk, options=options)
-            
+
+        # Apply an AI-requested model switch (takes effect from the next turn).
+        if res.get("switch_model"):
+            self._apply_model_switch(res["switch_model"])
+
+        # Persist any durable lessons the model reasoned out this turn.
+        try:
+            if res.get("learned_correction"):
+                memory.add_learned_correction(res["learned_correction"])
+            if res.get("learned_preference"):
+                memory.add_learned_preference(res["learned_preference"])
+            if res.get("finding"):
+                memory.record_finding(res["finding"])
+        except Exception:
+            pass
+
+        # Model signals the overall goal is finished → end the autonomous loop.
+        if bool(res.get("task_complete", False)):
+            self._stop_requested = True
+            try:
+                memory.increment_task_completed()
+                if res.get("workflow_summary"):
+                    memory.record_workflow(self._last_user_text, res["workflow_summary"])
+            except Exception:
+                pass
+
         if action_type == "bash" and command:
-            self._add_intercept(command)
-            self._set_busy_state(False)
+            self._pending_cmd_timeout = res.get("timeout")  # AI-requested per-command timeout
+            tier, reason = classify_command(command)
+            if tier == "auto" and self.chk_autorun.isChecked():
+                # Safe/read-only command + auto-run mode → execute without a manual click.
+                self.terminal_log.appendPlainText(f"\n[AUTO-RUN] safe command")
+                self._execute_command(command, timeout=self._pending_cmd_timeout)
+            else:
+                if tier == "confirm":
+                    self.terminal_log.appendPlainText(f"\n[APPROVAL NEEDED] {reason}")
+                self._add_intercept(command)
+                self._set_busy_state(False)
+        elif action_type == "send_input":
+            self._run_send_input(res.get("input_text", ""))
+        elif action_type == "read_file":
+            self._run_read_file(res.get("file_path", ""))
+        elif action_type == "write_file":
+            self._run_write_file(
+                res.get("file_path", ""), res.get("file_content", ""), bool(res.get("file_append", False))
+            )
+        elif action_type == "job":
+            self._run_job_action(res.get("job_action", ""), res.get("command", ""), res.get("job_id"))
+        elif action_type == "ghidra":
+            self._run_ghidra_action(
+                res.get("ghidra_action", ""), res.get("file_path", ""),
+                res.get("function", ""), res.get("script_code", ""),
+            )
         elif action_type == "gui" and gui_action:
-            self.terminal_log.appendPlainText(f"\n[GUI ACTION] Executing: {gui_action}")
-            exec_res = run_gui_action(gui_action)
-            self._handle_execution_result(exec_res, command_text=f"GUI:{gui_action}")
+            if self._vision_control:
+                # Live Screen Control: act autonomously (no per-click approval).
+                self.terminal_log.appendPlainText(
+                    f"\n[VISION] {gui_action.get('type', '?')} @ ({gui_action.get('x', 0)},{gui_action.get('y', 0)}) {gui_action.get('text', '')}".rstrip()
+                )
+                exec_res = run_gui_action(gui_action)
+                self._handle_execution_result(exec_res, command_text=f"GUI:{gui_action}")
+            else:
+                self._add_gui_intercept(gui_action)
+                self._set_busy_state(False)
         else:
             self._set_busy_state(False)
+
+    def _run_send_input(self, input_text: str):
+        """Send text to a command currently paused at an interactive prompt."""
+        self.terminal_log.appendPlainText(f"\n[SEND INPUT] {input_text!r}")
+        self.terminal_log.verticalScrollBar().setValue(self.terminal_log.verticalScrollBar().maximum())
+        self._set_busy_state(True)
+        self.cmd_worker = CommandWorker(lambda cb, t=input_text: resume_bash(t, on_output=cb))
+        self.cmd_worker.output_chunk.connect(self._on_cmd_output_chunk)
+        self.cmd_worker.finished_result.connect(
+            lambda res: self._handle_execution_result(res, command_text="send_input", echo_output=False)
+        )
+        self.cmd_worker.start()
+
+    def _run_read_file(self, path: str):
+        if not path:
+            self._set_busy_state(False)
+            return
+        self.terminal_log.appendPlainText(f"\n[READ FILE] {path}")
+        ok, content = tools.read_file(path)
+        res = ExecutionResult(
+            success=ok, stdout=content if ok else "", stderr="" if ok else content,
+            exit_code=0 if ok else 1,
+        )
+        self._handle_execution_result(res, command_text=f"read_file:{path}")
+
+    def _run_write_file(self, path: str, content: str, append: bool):
+        if not path:
+            self._set_busy_state(False)
+            return
+        self.terminal_log.appendPlainText(f"\n[WRITE FILE] {path} ({len(content)} bytes, append={append})")
+        ok, msg = tools.write_file(path, content, append=append)
+        res = ExecutionResult(
+            success=ok, stdout=msg if ok else "", stderr="" if ok else msg,
+            exit_code=0 if ok else 1,
+        )
+        self._handle_execution_result(res, command_text=f"write_file:{path}")
+
+    def _run_job_action(self, job_action: str, command: str, job_id):
+        """Manage background jobs (start/list/output/stop) and feed the result to the loop."""
+        jm = get_job_manager()
+        job_action = (job_action or "").lower()
+        ok, out = True, ""
+
+        if job_action == "start":
+            if not command:
+                ok, out = False, "job start requires a command."
+            else:
+                ok, msg, jid = jm.start(command)
+                out = msg
+                if ok:
+                    self.terminal_log.appendPlainText(f"\n[JOB STARTED] #{jid}: {command}")
+        elif job_action == "list":
+            out = jm.list_jobs()
+        elif job_action == "output":
+            if job_id is None:
+                ok, out = False, "job output requires a job_id."
+            else:
+                out = jm.output(int(job_id))
+        elif job_action == "stop":
+            if job_id is None:
+                ok, out = False, "job stop requires a job_id."
+            else:
+                ok, out = jm.stop(int(job_id))
+        else:
+            ok, out = False, f"Unknown job_action: {job_action!r} (use start/list/output/stop)."
+
+        res = ExecutionResult(success=ok, stdout=out if ok else "", stderr="" if ok else out,
+                              exit_code=0 if ok else 1)
+        self._handle_execution_result(res, command_text=f"job:{job_action}")
+
+    def _run_ghidra_action(self, ghidra_action: str, file_path: str, function: str, script_code: str):
+        """Drive Ghidra headless for reverse engineering; runs off-thread (analysis is slow)."""
+        g = get_ghidra()
+        ga = (ghidra_action or "").lower()
+        label = file_path or function or ""
+        self.terminal_log.appendPlainText(f"\n[GHIDRA] {ga} {label}".rstrip())
+        self.terminal_log.verticalScrollBar().setValue(self.terminal_log.verticalScrollBar().maximum())
+        self._set_busy_state(True)
+
+        def work(_cb):
+            if ga == "connect":
+                ok, out = g.connect()
+            elif ga == "status":
+                ok, out = True, g.status()
+            elif ga == "analyze":
+                ok, out = g.analyze(file_path)
+            elif ga == "functions":
+                ok, out = g.list_functions()
+            elif ga == "strings":
+                ok, out = g.list_strings()
+            elif ga == "decompile":
+                ok, out = g.decompile(function)
+            elif ga == "script":
+                ok, out = g.run_custom_script(script_code)
+            else:
+                ok, out = False, f"Unknown ghidra_action: {ga!r} (use connect/analyze/functions/strings/decompile/script/status)."
+            return ExecutionResult(success=ok, stdout=out if ok else "", stderr="" if ok else out,
+                                   exit_code=0 if ok else 1)
+
+        self.cmd_worker = CommandWorker(lambda cb: work(cb))
+        self.cmd_worker.finished_result.connect(
+            lambda res: self._handle_execution_result(res, command_text=f"ghidra:{ga}", echo_output=True)
+        )
+        self.cmd_worker.start()
+
+    def _connect_ghidra(self):
+        """One-click: locate Ghidra and report readiness (no AI turn)."""
+        ok, msg = get_ghidra().connect()
+        self.terminal_log.appendPlainText(f"\n[GHIDRA] {msg}\n")
+        self.terminal_log.verticalScrollBar().setValue(self.terminal_log.verticalScrollBar().maximum())
+        self._add_bubble("system", ("🧬 **Ghidra connected.** " + msg) if ok else ("⚠️ " + msg))
+        if ok:
+            self.btn_ghidra.setText("🧬 Ghidra ✓")
+            self.btn_ghidra.setStyleSheet(
+                f"QPushButton {{ background: rgba(45, 212, 191, 0.12); color: {ACCENT_GREEN}; "
+                f"border: 1px solid {ACCENT_GREEN}; border-radius: 9px; padding: 7px 13px; font-weight: 600; }}"
+            )
 
     def _on_ai_error(self, error: str):
         self._set_busy_state(False)
@@ -1724,7 +2487,23 @@ class MainWindow(QMainWindow):
         self.messages_layout.insertWidget(count - 1, banner)
         self._smooth_scroll_to_bottom()
 
-    def _on_command_approved(self, command: str):
+    def _add_gui_intercept(self, gui_action: dict):
+        """Require human approval before any pyautogui desktop action, just like bash."""
+        desc = (
+            f"GUI ACTION: {gui_action.get('type', '?')} "
+            f"@ ({gui_action.get('x', 0)}, {gui_action.get('y', 0)})"
+        )
+        txt = gui_action.get("text", "")
+        if txt:
+            desc += f"  text={txt!r}"
+        banner = InterceptBanner(desc)
+        banner.approved.connect(lambda _s=None, g=gui_action: self._on_gui_approved(g))
+        banner.cancelled.connect(self._on_command_cancelled)
+        count = self.messages_layout.count()
+        self.messages_layout.insertWidget(count - 1, banner)
+        self._smooth_scroll_to_bottom()
+
+    def _remove_last_intercept_banner(self):
         count = self.messages_layout.count()
         for i in range(count - 2, -1, -1):
             item = self.messages_layout.itemAt(i)
@@ -1733,49 +2512,155 @@ class MainWindow(QMainWindow):
                 widget.setParent(None)
                 widget.deleteLater()
                 break
-                
-        self.terminal_log.appendPlainText(f"\n$ {command}")
-        QApplication.processEvents()
-        
+
+    def _on_gui_approved(self, gui_action: dict):
+        self._remove_last_intercept_banner()
+        self.terminal_log.appendPlainText(f"\n[GUI ACTION] Executing: {gui_action}")
         self._set_busy_state(True)
-        exec_res = run_bash(command)
-        self._handle_execution_result(exec_res, command_text=command)
+        exec_res = run_gui_action(gui_action)
+        self._handle_execution_result(exec_res, command_text=f"GUI:{gui_action}")
+
+    def _on_command_approved(self, command: str):
+        self._remove_last_intercept_banner()
+        self._execute_command(command)
+
+    _TIMEOUT_SENTINEL = object()
+
+    def _execute_command(self, command: str, manual: bool = False, timeout=_TIMEOUT_SENTINEL):
+        """Run a bash command off the GUI thread with live streaming (shared by
+        manual-approval, auto-run, and manual-terminal paths).
+
+        `manual=True` (user typed it in the terminal panel) suppresses the AI
+        follow-up loop so the agent doesn't hijack the user's own command.
+        `timeout` is seconds (0 = no limit, None = auto); if omitted, the last
+        AI-requested per-command timeout is used."""
+        if timeout is self._TIMEOUT_SENTINEL:
+            timeout = getattr(self, "_pending_cmd_timeout", None)
+        self._pending_cmd_timeout = None
+        self._skip_ai_followup = manual
+        # If the command uses sudo, make sure we have a password cached (asked once/session).
+        self._ensure_sudo_password_for(command)
+
+        self.terminal_log.appendPlainText(f"\n$ {command}")
+        self.terminal_log.verticalScrollBar().setValue(self.terminal_log.verticalScrollBar().maximum())
+
+        self._set_busy_state(True)
+        # Run OFF the GUI thread so the UI stays responsive and output streams live.
+        self.cmd_worker = CommandWorker(lambda cb, c=command, t=timeout: run_bash(c, timeout=t, on_output=cb))
+        self.cmd_worker.output_chunk.connect(self._on_cmd_output_chunk)
+        self.cmd_worker.finished_result.connect(
+            lambda res, c=command: self._handle_execution_result(res, command_text=c, echo_output=False)
+        )
+        self.cmd_worker.start()
+
+    def _on_cmd_output_chunk(self, chunk: str):
+        """Append streamed command output to the terminal panel in real time."""
+        self.terminal_log.moveCursor(QTextCursor.MoveOperation.End)
+        self.terminal_log.insertPlainText(chunk)
+        self.terminal_log.verticalScrollBar().setValue(self.terminal_log.verticalScrollBar().maximum())
+
+    def _ensure_sudo_password_for(self, command: str):
+        """Prompt once per session for a sudo password when a sudo command is run."""
+        if not command or not re.search(r"(^|\s|;|&&|\|)sudo(\s|$)", command):
+            return
+        shell = get_shell()
+        if shell.has_sudo_password:
+            return
+        pw, ok = QInputDialog.getText(
+            self,
+            "🔐 Sudo Password Required",
+            "This command uses sudo. Enter your sudo password.\n"
+            "(Kept only in memory for this session — never written to disk.)",
+            QLineEdit.EchoMode.Password,
+        )
+        if ok and pw:
+            shell.set_sudo_password(pw)
 
     def _on_command_cancelled(self):
-        count = self.messages_layout.count()
-        for i in range(count - 2, -1, -1):
-            item = self.messages_layout.itemAt(i)
-            widget = item.widget()
-            if isinstance(widget, InterceptBanner):
-                widget.setParent(None)
-                widget.deleteLater()
-                break
+        self._remove_last_intercept_banner()
         self._add_bubble("system", "Execution paused / command cancelled by user.")
         self.terminal_log.appendPlainText("\n[CANCELLED] Command execution rejected by user.\n")
         self._terminal_output = "User cancelled command execution."
         self._set_busy_state(False)
 
-    def _handle_execution_result(self, exec_res, command_text: str = ""):
-        out = exec_res.combined_output()
-        if not out:
-            out = "(Command completed with no stdout/stderr)"
-        
-        status_str = "SUCCESS" if exec_res.success else "FAILED"
+    def _handle_execution_result(self, exec_res, command_text: str = "", echo_output: bool = True):
+        # For streamed bash commands the body already appeared live; only non-streamed
+        # results (e.g. GUI actions, blocked commands) echo their full output here.
+        if echo_output:
+            out = exec_res.combined_output() or "(Command completed with no output)"
+            self.terminal_log.appendPlainText(out)
+
         if exec_res.blocked:
             status_str = "BLOCKED BY GUARDRAILS"
-            
-        self.terminal_log.appendPlainText(f"[{status_str}]\n{out}\n" + "─"*50)
+        elif exec_res.timed_out:
+            status_str = "TIMED OUT"
+        elif exec_res.success:
+            status_str = "SUCCESS"
+        else:
+            status_str = "FAILED"
+        code = f" exit {exec_res.exit_code}" if getattr(exec_res, "exit_code", None) is not None else ""
+
+        if exec_res.blocked:
+            self.terminal_log.appendPlainText(f"\n[{status_str}] {exec_res.reason}\n" + "─" * 50)
+            self._terminal_output = f"Command was blocked by safety guardrails: {exec_res.reason}"
+        else:
+            self.terminal_log.appendPlainText(f"\n[{status_str}{code}]\n" + "─" * 50)
+            self._terminal_output = exec_res.output_for_ai() if hasattr(exec_res, "output_for_ai") else exec_res.combined_output()
         self.terminal_log.verticalScrollBar().setValue(self.terminal_log.verticalScrollBar().maximum())
-        
-        self._terminal_output = out
-        
+
+        # Reflect the persistent shell's current working directory in the UI.
+        cwd = getattr(exec_res, "cwd", "")
+        if cwd:
+            self.cwd_label.setText(f"📂 {cwd}")
+
+        # Interactive prompt: pause and let the USER answer the running process directly.
+        if getattr(exec_res, "awaiting_input", False):
+            self._awaiting_input = True
+            self._add_bubble(
+                "system",
+                "⏳ **The running command is waiting for input.** Type your response below "
+                "and press Enter to send it to the process (or ask me to handle it).",
+            )
+            self._set_busy_state(False)
+            self._apply_awaiting_style()
+            return
+        self._awaiting_input = False
+        self._clear_awaiting_style()
+
+        # Self-learning: record real shell commands (not file/gui/input pseudo-actions).
+        if (command_text and not exec_res.blocked
+                and not command_text.startswith(("GUI:", "read_file:", "write_file:", "send_input", "job:", "ghidra:"))):
+            try:
+                memory.learn_from_interaction(self._last_user_text, command_text, exec_res.success)
+            except Exception:
+                pass
+
+        if self._stop_requested:
+            self._set_busy_state(False)
+            return
+
+        if self._skip_ai_followup:
+            # Manual user command — don't let the AI loop take over.
+            self._skip_ai_followup = False
+            self._set_busy_state(False)
+            return
+
         if self._is_autonomous and not exec_res.blocked:
-            QTimer.singleShot(500, self._trigger_autonomous_next_turn)
+            self._auto_turn_count += 1
+            if self._auto_turn_count > self._auto_turn_limit:
+                self._add_bubble(
+                    "system",
+                    f"⏹ **Auto-execution limit reached** ({self._auto_turn_limit} steps). "
+                    f"Send a message to continue if the task isn't finished.",
+                )
+                self._set_busy_state(False)
+                return
+            QTimer.singleShot(400, self._trigger_autonomous_next_turn)
         else:
             self._set_busy_state(False)
 
     def _trigger_autonomous_next_turn(self):
-        if not self.engine:
+        if not self.engine or self._stop_requested:
             self._set_busy_state(False)
             return
             
@@ -1786,11 +2671,13 @@ class MainWindow(QMainWindow):
             notes_str = "\n".join(self._pending_steering_notes)
             user_prompt = f"[USER MID-EXECUTION STEERING NOTE]: {notes_str}"
             self._pending_steering_notes.clear()
-        
+        if self._vision_control:
+            user_prompt = self._vision_preamble() + user_prompt
+
         self.worker = AIWorker(
             engine=self.engine,
             user_text=user_prompt,
-            attach_screenshot=self.chk_screenshot.isChecked(),
+            attach_screenshot=self.chk_screenshot.isChecked() or self._vision_control,
             terminal_output=self._terminal_output,
             image_paths=None
         )
@@ -1987,9 +2874,17 @@ class MainWindow(QMainWindow):
             self._persist_sessions_to_disk()
 
     def closeEvent(self, event):
-        """Save active session to disk on application exit."""
+        """Save active session to disk and tear down the persistent shell on exit."""
         try:
             self._auto_save_active_session()
+        except Exception:
+            pass
+        try:
+            get_shell().close()
+        except Exception:
+            pass
+        try:
+            get_job_manager().stop_all()
         except Exception:
             pass
         event.accept()

@@ -1,9 +1,9 @@
-# 🐉 Kali-AI Agent by Om v2.0
+# 🐉 Kali-AI Agent by Om v3.0
 
-> **Autonomous Penetration Testing Co-Pilot & Security Operations AI for Kali Linux**  
+> **Autonomous Penetration Testing Co-Pilot & Security Operations AI for Kali Linux**
 > Control, audit, and analyze your entire Kali Linux environment through natural language pair-programming with Gemini, OpenRouter, AgentRouter, or any OpenAI-compatible LLM.
 
-![Version](https://img.shields.io/badge/version-2.0-blue?style=for-the-badge&logo=kali-linux)
+![Version](https://img.shields.io/badge/version-3.0-blue?style=for-the-badge&logo=kali-linux)
 ![Author](https://img.shields.io/badge/author-Om-orange?style=for-the-badge)
 ![Platform](https://img.shields.io/badge/platform-Kali%20Linux%20%7C%20Linux-purple?style=for-the-badge&logo=linux)
 ![Python](https://img.shields.io/badge/python-3.10%2B-green?style=for-the-badge&logo=python)
@@ -11,53 +11,54 @@
 
 ---
 
-## 📸 Overview & Dashboard Preview
+## 📸 Overview
 
-**Kali-AI Agent by Om v2.0** is a state-of-the-art cybersecurity desktop co-pilot engineered specifically for Kali Linux. It operates shoulder-to-shoulder with security researchers, ethical hackers, and penetration testers—combining autonomous tool execution, intelligent RAG documentation lookup, real-time target inventory management, self-learning user memory, and strict human-in-the-loop safety guardrails.
+**Kali-AI Agent by Om v3.0** is a cybersecurity desktop co-pilot engineered for Kali Linux. It works shoulder-to-shoulder with security researchers — combining a **real terminal-grade execution engine**, autonomous tool execution, live system & tool awareness, self-learning memory, and tiered human-in-the-loop safety.
+
+v3.0 is a major engine overhaul focused on actually controlling Linux like a human operator at a terminal.
 
 ---
 
-## ✨ Key Features & Technical Highlights
+## ✨ Key Features
 
-### 🤝 1. Pair-Programming & Human-Like Co-Pilot Partner
-* **Talk First, Align, Then Execute**: Kali-AI does NOT jump into command execution blindly. It first discusses goals, clarifies requirements, and presents strategic options in natural language (Hindi, Hinglish, or English).
-* **Interactive Option Decision Buttons**: When a scan or tool output returns multiple targets or choices, clickable decision option buttons (`⚡ Select Option`) are rendered directly inside the chat interface.
+### 🖥️ 1. Persistent Terminal Engine (`shell_session.py`)
+The agent drives **one long-lived bash session attached to a PTY**, so it behaves like a real terminal user:
+* **State persists** across commands — `cd`, `export`, `source`, venv activation and shell variables all survive between turns.
+* **Real TTY** — `sudo`, `apt`, `ssh` and other interactive tools work because they get a genuine terminal.
+* **Live streaming** — command output appears in the terminal panel as it is produced, not after the command finishes.
+* **Interrupt without killing the shell** — the Stop button sends Ctrl-C to the running command; the session stays alive with its state intact.
+* **Real exit codes** — each command's true exit status is captured and fed back to the AI.
 
-### 🧠 2. Persistent Self-Learning Engine (`memory.py`)
-* **User Habit & Preference Adaptation**: Automatically tracks and stores user preferences, preferred network tools, allowed scopes, and historical corrections in `~/.config/kali-ai/memory.json`.
-* **System Prompt Injection**: Dynamically injects `[Persistent Self-Learning Memory & User Profile]` into every AI turn so Kali-AI gets smarter with every engagement.
+### 🔐 2. Automatic Sudo Handling
+When a command needs root, the agent prompts you once per session for your sudo password (kept **only in memory**, never written to disk) and auto-supplies it whenever `sudo` asks. If you are already root, it skips sudo entirely.
 
-### 💾 3. Real-Time & Exit Session Auto-Persistence (`sessions.py`)
-* **Instant Real-Time Auto-Save**: Ongoing conversations are saved to disk (`~/.config/kali-ai/sessions.json`) after every single message.
-* **Window Exit Protection (`closeEvent`)**: Closing the app window abruptely (`✖`) auto-saves the active session so chat history is never lost.
-* **Session Management Sidebar**: Left sidebar with 1-click historical session reload and right-click context menu (`🗑 Delete Session`).
+### 🧰 3. Structured Tools & Interactive Control
+Beyond plain shell commands, the agent has dedicated tools:
+* **`read_file` / `write_file`** — reliable structured file I/O instead of fragile `cat`/`echo >`/heredocs.
+* **`send_input`** — drive interactive programs (msfconsole, python3 REPL, `[y/n]` prompts, menus). When a command pauses waiting for input, the agent can answer and the command continues in the same session.
 
-### 🎛️ 4. Dynamic Auto-Fetch & Dashboard Model Switcher
-* **API Model Auto-Discovery**: Auto-detects models from OpenAI/OpenRouter/AgentRouter `/v1/models` endpoints and Google Gemini `genai.list_models()`.
-* **Dashboard Dropdown Selector**: Interactive 1-click model switcher (`QComboBox`) directly on the bottom input bar with expanded popup menu (`min-width: 340px`) to display full model names without truncation.
-* **Custom Gateway Error Protection**: Crash-proof response parser handling string, dictionary, or Pydantic responses from custom API proxies.
+### 🧠 4. Live Environment & Tool Awareness (`environment.py`)
+Every turn the AI is grounded with real facts about the host: distribution, kernel, hostname, whether it is **root**, and a scan of which offensive-security tools (`nmap`, `metasploit`, `sqlmap`, `hashcat`, `hydra`, …) are actually installed — so it uses available tools instead of guessing, and installs what's missing.
 
-### 📊 5. Target Scope Guard & Interactive Asset Inventory
-* **🎯 Target Scope Guard (`guardrails.py`)**: Restrict operations to authorized CIDR blocks, IP ranges, or domains. Blanking the scope restores standard open mode.
-* **📊 Target Inventory Dashboard Widget**: Top header toggle launching a structured asset management table featuring IP hosts, open ports, service banners, risk badges (`Low`, `Medium`, `High`), and 1-click quick vulnerability audit actions.
+### 🤖 5. Agentic Observe–Act Loop
+The agent runs a goal → act → observe output → act again loop, signalling `task_complete` when the objective is done. A safety cap bounds runaway loops, and the robust JSON parser reliably decodes tool calls even when file payloads contain code, braces, or quotes.
 
-### ⚡ 6. Non-Blocking Terminal Execution & Freeze Prevention (`executor.py`)
-* **Stdin Pipe Protection (`stdin=subprocess.DEVNULL`)**: Prevents interactive commands (`sudo`, `wifite`, `airmon-ng`) from hanging indefinitely waiting for stdin input.
-* **Streaming Tool Auto-Timeout (`timeout 15`)**: Automatically wraps continuous streaming tools (`airodump-ng`, `tcpdump`, `tshark`, `top`) with `timeout 15` to capture data without locking the terminal.
-* **45s Hard Network Timeout**: Enforces 45-second socket timeouts on all AI provider network requests.
+### 🛡️ 6. Tiered Human-in-the-Loop Safety (`guardrails.py`)
+Commands are classified into three tiers:
+* **Blocked** — catastrophic commands never run (`rm -rf /` & home/system variants, `mkfs`, raw disk writes, fork bombs, firewall flushes, auth-file overwrites, …).
+* **Confirm** — impactful-but-legitimate commands always require your approval (`rm`, `dd`, `kill`, service/firewall/user-management changes, mounts, package removal, recursive `chmod`/`chown`, …).
+* **Auto** — safe/read-only commands. With **⚡ Auto-run safe commands** enabled, these execute automatically for true hands-off recon; everything risky still pauses for approval.
 
-### 📶 7. Internet Connection Preservation (Wireless Audit Rule)
-* **Preserve VirtualBox Network Connection**: Explicit system prompt instruction forbidding global `airmon-ng check kill` or `systemctl stop NetworkManager` to prevent cutting primary `eth0` internet connections during Wi-Fi audits.
+Plus a **🎯 Target Scope Guard** (restrict to authorized CIDRs/IPs/domains) and an **audit log** of every executed/blocked command at `~/.config/kali-ai/audit.log`.
 
-### 🔤 8. Font Scaling Controls (`A-` / `13px` / `A+`) & Keyboard Shortcuts
-* **Live Text Scaling**: Top header controls (`A-` / `13px` / `A+`) and keyboard shortcuts (`Ctrl +` / `Ctrl -`) dynamically resize chat bubbles, code blocks, and terminal logs in real-time.
+### 💬 7. Natural Pair-Programming Co-Pilot
+Talks first and aligns on a plan before executing, in Hindi / Hinglish / English. Interactive decision buttons let you pick targets/options directly in chat, and the input bar stays unlocked for mid-execution steering notes.
 
-### 🟥 9. Abort Execution Button & Emerald Activity Spinner
-* **Instant Abort (`🟥`)**: Dedicated stop button that immediately terminates the active AI worker thread (`worker.terminate()`) and cancels background tasks.
-* **Neon Circular Spinner**: Custom 33 FPS custom-painted emerald spinning arc indicator active during processing.
+### 🧠 8. Self-Learning Memory & Session Persistence
+Learns preferred tools and habits over time (`memory.py` → `~/.config/kali-ai/memory.json`), auto-saves every conversation (`sessions.py`), and keeps a bounded rolling context window so long sessions stay fast and don't re-send old screenshots.
 
-### 💬 10. Concurrent Mid-Execution Steering Notes
-* **Unlocked Input Bar**: Input field remains active during background execution, queuing mid-execution steering notes into `self._pending_steering_notes` and appending them to the next turn automatically.
+### 🎛️ 9. Dynamic Model Switcher & Dual Providers
+Auto-detects models from OpenAI/OpenRouter/AgentRouter and Google Gemini, with a one-click model switcher on the input bar.
 
 ---
 
@@ -65,103 +66,85 @@
 
 ```
 kali-ai/
-├── main.py            # Main application launcher & entry point
-├── gui.py             # Glassmorphism PyQt6 GUI, ChatBubbles, Inventory & Dialogs
-├── ai_engine.py       # Dual AI Provider (Gemini + OpenAI/OpenRouter), RAG & Prompts
-├── executor.py        # Safe command execution engine & non-blocking subprocesses
-├── guardrails.py      # Security command filter & Target Scope compliance checker
-├── memory.py          # Persistent self-learning user profile & habit memory engine
-├── sessions.py        # Persistent disk storage manager for conversation sessions
+├── main.py            # Application launcher & entry point
+├── gui.py             # PyQt6 GUI, chat, inventory, approval banners, dialogs
+├── ai_engine.py       # Dual provider (Gemini + OpenAI/OpenRouter), prompt, robust JSON parsing
+├── shell_session.py   # Persistent PTY bash session (state, sudo, streaming, interrupt, exit codes)
+├── executor.py        # Execution engine (bash via shell_session, GUI actions, audit log)
+├── tools.py           # Structured file tools (read_file / write_file / list_dir)
+├── environment.py     # Live host + installed-tool awareness injected into the prompt
+├── guardrails.py      # Tiered safety: blocked / confirm / auto + target-scope enforcement
+├── memory.py          # Persistent self-learning user profile & habit memory
+├── sessions.py        # Persistent disk storage for conversation sessions
 ├── config.py          # Config management (~/.config/kali-ai/config.json)
-├── screenshot.py      # Multi-backend screenshot capture (PyAutoGUI, Scrot, xfce4-screenshooter)
+├── screenshot.py      # Multi-backend screenshot capture (mss / PIL / PyQt6)
 ├── requirements.txt   # Required Python packages
 ├── install.sh         # Self-contained single-file installer & uninstaller
 ├── run.sh             # Virtualenv auto-management launcher
 ├── build.sh           # Standalone binary compiler (PyInstaller)
-├── build_installer.ps1# Installer bundler script
+├── builder.py         # Generates the self-extracting install.sh
 └── README.md          # Project documentation
 ```
 
 ---
 
-## 🚀 Installation & Usage Guide
+## 🚀 Installation & Usage
 
 ### Method 1: Single-File Installer (Recommended)
-
-Simply download `install.sh` to your Kali Linux machine and execute:
-
+Download `install.sh` to your Kali machine and run:
 ```bash
 bash install.sh
 ```
+Extracts all source into `~/KaliAI/`, installs system + pip dependencies, and creates a desktop/app-menu shortcut. Uninstall anytime: `bash install.sh --uninstall`.
 
-- ✅ Automatically extracts all embedded source files into `~/KaliAI/`
-- ✅ Installs system dependencies (`python3-venv`, `scrot`, `xclip`, `qt6-base-dev`)
-- ✅ Creates isolated virtual environment & installs pip requirements
-- ✅ Generates Kali Linux Application Menu & Desktop shortcut
-- 🗑️ **Uninstall anytime**: `bash install.sh --uninstall`
-
----
-
-### Method 2: Direct Project Run (`run.sh`)
-
-If you cloned the repository:
-
+### Method 2: Direct Run
 ```bash
-git clone https://github.com/your-username/kali-ai.git
-cd kali-ai
+git clone https://github.com/ombuilds-ai/kali-ai-agent.git
+cd kali-ai-agent
 chmod +x run.sh
 ./run.sh
 ```
 
----
-
-### Method 3: Standalone Binary Compiler (`build.sh`)
-
-To compile Kali-AI into a standalone portable executable binary (~100MB) that runs without Python installed:
-
+### Method 3: Standalone Binary
 ```bash
 chmod +x build.sh
-./build.sh
+./build.sh      # output: dist/KaliAI-Agent
 ```
 
-The resulting executable is generated at `dist/KaliAI-OmniControl`.
+> **Note:** The persistent PTY terminal engine is Linux-only. On non-Linux hosts the app runs with a degraded per-command fallback (no state persistence) for UI testing.
 
 ---
 
 ## ⚙️ Configuration & API Setup
 
-Kali-AI supports dual AI provider backends:
+Dual AI provider backends:
 
-1. **Google Gemini (Recommended / Free)**:
-   * Obtain a free API Key from [Google AI Studio](https://aistudio.google.com/).
-   * Models supported: `gemini-2.0-flash`, `gemini-2.0-flash-lite`, `gemini-1.5-flash`, `gemini-1.5-pro`.
+1. **Google Gemini** — free key from [Google AI Studio](https://aistudio.google.com/). Models: `gemini-2.0-flash`, `gemini-1.5-flash`, `gemini-1.5-pro`, …
+2. **OpenAI / OpenRouter / Custom** — works with OpenRouter, AgentRouter, Ollama, vLLM, LM Studio, or OpenAI. Default Base URL `https://openrouter.ai/api/v1`.
 
-2. **OpenAI / OpenRouter / Custom Local APIs**:
-   * Works with OpenRouter, AgentRouter, Local Ollama, vLLM, LM Studio, or OpenAI.
-   * Default Base URL: `https://openrouter.ai/api/v1` or custom endpoints.
-
-Configuration settings are stored securely with `0700` permissions at `~/.config/kali-ai/config.json`.
+Config is stored with `0600` permissions at `~/.config/kali-ai/config.json`.
 
 ---
 
-## 🛡️ Security Guardrails & Safety Architecture
+## 🛡️ Security & Responsible Use
 
 > [!IMPORTANT]
-> Kali-AI operates with strict **Human-in-the-Loop Interception Guardrails**.
+> This tool executes real commands on your system, including with root privileges. Use it only on systems and networks you are explicitly authorized to test.
 
-* **Approval Banner**: Every shell command generated by the AI requires explicit user review (`[Approve Execution]` / `[Reject]`).
-* **Blacklisted Destructive Commands**: Auto-blocks destructive system commands (`rm -rf /`, `:(){ :|:& };:`, disk formatting, raw block device writes).
-* **Target Scope Enforcement**: Rejects command execution against IP targets outside the user-defined allowed target scope.
+* **Tiered guardrails** — catastrophic commands are blocked; impactful ones require approval; safe ones can auto-run (opt-in).
+* **Target Scope Guard** — rejects commands aimed at IPs/domains outside your authorized scope.
+* **Audit log** — every executed and blocked command is recorded at `~/.config/kali-ai/audit.log`.
+* **Sudo password** — held in memory for the session only, never persisted.
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the `LICENSE` file for details.
+MIT License — see the `LICENSE` file.
 
 ---
 
-<p center="align">
+<p align="center">
   <b>Developed for Ethical Hackers, Security Analysts, and Penetration Testers.</b><br>
   <i>Use responsibly and only on networks/systems you have explicit authorization to audit.</i>
 </p>

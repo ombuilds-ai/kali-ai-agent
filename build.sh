@@ -90,7 +90,15 @@ pyinstaller \
     --add-data "guardrails.py:." \
     --add-data "screenshot.py:." \
     --add-data "config.py:." \
+    --add-data "environment.py:." \
+    --add-data "shell_session.py:." \
+    --add-data "tools.py:." \
+    --add-data "jobs.py:." \
+    --add-data "ghidra.py:." \
     --add-data "executor.py:." \
+    --add-data "memory.py:." \
+    --add-data "sessions.py:." \
+    --add-data "plugins.py:." \
     --add-data "ai_engine.py:." \
     --hidden-import "PyQt6.QtCore" \
     --hidden-import "PyQt6.QtGui" \
