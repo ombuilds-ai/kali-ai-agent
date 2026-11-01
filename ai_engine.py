@@ -67,16 +67,26 @@ def get_system_prompt() -> str:
     env_summary = get_environment_summary()
     tools_summary = get_tool_availability_summary()
     try:
-        operator_mode = load_config().get("operator_mode", True)
+        cfg = load_config()
+        operator_mode = cfg.get("operator_mode", True)
+        effort = cfg.get("effort_level", "balanced")
     except Exception:
-        operator_mode = True
+        operator_mode, effort = True, "balanced"
     mandate = _OPERATOR_MANDATE if operator_mode else ""
+    effort_hint = _EFFORT_HINT.get(effort, _EFFORT_HINT["balanced"])
+    # In fast mode, drop the long methodology block to cut latency/tokens.
+    methodology = "" if effort == "fast" else _PRO_METHODOLOGY
     return f"""You are Kali-AI Agent by Om, a world-class cyber security analyst and autonomous penetration testing co-pilot operating directly inside Kali Linux.
 You talk naturally like an expert pair-programming AI assistant (similar to Antigravity AI).
 
+### 💬 Conversation vs Action
+You are also a great general assistant. For greetings, casual talk, general questions, or non-security help, just reply naturally and warmly with action_type "chat" — like ChatGPT/Claude would — WITHOUT forcing security framing, plans, or commands. Only move into tools/commands when the user actually asks for a task to be done on the system.
+
+{effort_hint}
+
 {mandate}
 
-{_PRO_METHODOLOGY}
+{methodology}
 
 {env_summary}
 
@@ -298,6 +308,22 @@ def _extract_and_validate_json(raw: str) -> dict:
 # Rolling-window size (messages, not turns) kept in conversation history.
 _MAX_HISTORY_MSGS = 20
 
+# Effort levels: (max_output_tokens, temperature). Lower tokens = faster responses.
+_EFFORT = {
+    "fast":     (1200, 0.4),
+    "balanced": (2560, 0.6),
+    "deep":     (4096, 0.7),
+}
+_EFFORT_HINT = {
+    "fast": "### Effort: FAST — Respond quickly and concisely. Take the most direct next action with minimal deliberation; keep explanations short.",
+    "balanced": "### Effort: BALANCED — Reason enough to be correct, stay efficient, avoid unnecessary steps.",
+    "deep": "### Effort: DEEP — Engage maximum reasoning. Think carefully step-by-step in your `thought`, weigh alternatives and edge cases, and verify thoroughly before acting. Accuracy over speed.",
+}
+
+
+def _effort_params(effort: str):
+    return _EFFORT.get(effort, _EFFORT["balanced"])
+
 
 def _is_free_model(m: dict) -> bool:
     """True if an OpenRouter /models entry is free (id ':free' suffix or zero pricing)."""
@@ -399,6 +425,7 @@ class AIEngine:
         self.gemini_chat = None
         self.screenshot_detail = "low"  # bumped to "high" during Live Screen Control
         self.free_models_only = False   # list only free models when True (both providers)
+        self.effort = "balanced"        # fast | balanced | deep
 
     def _init_openai(self):
         if self.openai_key:
@@ -703,11 +730,12 @@ class AIEngine:
             + [{"role": "user", "content": content}]
         )
 
+        max_toks, temp = _effort_params(self.effort)
         response = self.openai_client.chat.completions.create(
             model=self.openai_model,
             messages=messages,
-            max_tokens=4096,
-            temperature=0.7,
+            max_tokens=max_toks,
+            temperature=temp,
             timeout=60.0,
         )
 
@@ -795,10 +823,11 @@ class AIEngine:
                 contents.append({"role": role, "parts": [txt]})
         contents.append({"role": "user", "parts": parts})
 
+        max_toks, temp = _effort_params(self.effort)
         try:
             response = self.gemini_model_obj.generate_content(
                 contents,
-                generation_config={"temperature": 0.7, "max_output_tokens": 4096},
+                generation_config={"temperature": temp, "max_output_tokens": max_toks},
                 request_options={"timeout": 60.0},
             )
             raw_reply = response.text

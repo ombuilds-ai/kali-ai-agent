@@ -19,6 +19,7 @@ DEFAULT_CONFIG = {
     "font_size": 13,
     "operator_mode": True,       # never refuse authorized security tasks
     "free_models_only": False,   # OpenRouter: show only free models
+    "effort_level": "balanced",  # "fast" | "balanced" | "deep" — reasoning depth vs speed
 }
 
 

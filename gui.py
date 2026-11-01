@@ -455,7 +455,7 @@ class SettingsDialog(QDialog):
         provider_layout.addWidget(self.provider_combo)
         layout.addLayout(provider_layout)
         
-        self.openai_group = QGroupBox("OpenAI / Custom Base API")
+        self.openai_group = QGroupBox("OpenRouter / OpenAI / Custom API")
         self.openai_group.setStyleSheet(f"QGroupBox {{ border: 1px solid {BORDER_COLOR}; border-radius: 8px; margin-top: 8px; font-weight: bold; }} QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 5px; }}")
         openai_layout = QFormLayout(self.openai_group)
         openai_layout.setContentsMargins(10, 14, 10, 10)
@@ -566,8 +566,11 @@ class SettingsDialog(QDialog):
             self.fetch_timer.start()
 
     def _on_provider_changed(self, provider: str):
-        self.openai_group.setVisible(provider == "openai")
-        self.gemini_group.setVisible(provider == "gemini")
+        # Both providers can be configured at the same time — show BOTH groups so the
+        # user can enter their Gemini key AND their OpenRouter key together. The dropdown
+        # just picks the PRIMARY/default provider; the agent can use models from both.
+        self.openai_group.setVisible(True)
+        self.gemini_group.setVisible(True)
         
     def _auto_fetch_models(self):
         provider = self.provider_combo.currentText()
@@ -1570,6 +1573,20 @@ class MainWindow(QMainWindow):
         tb_layout.addWidget(self.corner_spinner)
         tb_layout.addStretch()
         
+        # Effort / thinking-power selector
+        self.effort_combo = QComboBox()
+        self.effort_combo.addItems(["⚡ Fast", "⚖ Balanced", "🧠 Deep"])
+        self.effort_combo.setToolTip("Thinking effort — Fast: quick & concise · Balanced · Deep: max reasoning & accuracy")
+        self.effort_combo.setStyleSheet(
+            f"QComboBox {{ background: #0b111c; border: 1px solid #1e293b; border-radius: 8px; "
+            f"padding: 3px 8px; font-size: 11px; color: {ACCENT_CYAN}; font-weight: 600; }}"
+            f"QComboBox::drop-down {{ border: none; width: 14px; }}"
+        )
+        _eff_map = {"fast": "⚡ Fast", "balanced": "⚖ Balanced", "deep": "🧠 Deep"}
+        self.effort_combo.setCurrentText(_eff_map.get(load_config().get("effort_level", "balanced"), "⚖ Balanced"))
+        self.effort_combo.currentTextChanged.connect(self._on_effort_changed)
+        tb_layout.addWidget(self.effort_combo)
+
         # Feature 4 Header Toggle Button: Inventory Dashboard
         self.btn_toggle_inventory = QPushButton("📊 Target Inventory")
         self.btn_toggle_inventory.setStyleSheet(f"font-size: 11px; padding: 3px 8px; background: #172030; color: {ACCENT_AMBER};")
@@ -2021,6 +2038,7 @@ class MainWindow(QMainWindow):
                 self.model_selector.blockSignals(False)
                 
                 self.engine.free_models_only = config.get("free_models_only", False)
+                self.engine.effort = config.get("effort_level", "balanced")
                 # Dashboard dropdown lists models from BOTH configured providers.
                 self.fetch_worker = ModelFetchWorker(self.engine, merged=True)
                 self.fetch_worker.models_ready.connect(self._on_dashboard_models_ready)
@@ -2108,6 +2126,16 @@ class MainWindow(QMainWindow):
     def _open_jobs(self):
         dlg = JobsDialog(self)
         dlg.exec()
+
+    def _on_effort_changed(self, text: str):
+        level = "fast" if "Fast" in text else ("deep" if "Deep" in text else "balanced")
+        cfg = load_config()
+        cfg["effort_level"] = level
+        save_config(cfg)
+        if self.engine:
+            self.engine.effort = level
+        self.status_lbl.setText(f"● Effort: {level}")
+        self.status_lbl.setStyleSheet(f"color: {ACCENT_CYAN}; font-size: 11px; font-weight: 600;")
 
     def _toggle_vision_control(self, on: bool):
         """Enable/disable Live Screen Control (continuous vision + autonomous mouse/keyboard)."""
