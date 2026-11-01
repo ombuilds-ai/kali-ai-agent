@@ -1,0 +1,5 @@
+# Force LF line endings for shell scripts & desktop entries so they run on Linux
+# regardless of the OS they were cloned/edited on (avoids the bash $'\r' error).
+*.sh      text eol=lf
+*.desktop text eol=lf
+*.py      text eol=lf
