@@ -506,15 +506,6 @@ class AIEngine:
             tail = self.history[-(_MAX_HISTORY_MSGS - 1):]  # most recent context
             self.history = head + tail
 
-    def _trim_gemini_history(self):
-        """Bound the Gemini stateful-chat history so image blobs don't accumulate forever."""
-        try:
-            hist = self.gemini_chat.history
-            if len(hist) > _MAX_HISTORY_MSGS:
-                hist[:] = hist[:2] + hist[-(_MAX_HISTORY_MSGS - 2):]
-        except Exception:
-            pass
-
     def test_connection(self) -> tuple[bool, str]:
         if self.provider == "openai":
             return self._test_openai()

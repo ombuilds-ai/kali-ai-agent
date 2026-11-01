@@ -432,13 +432,25 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("⚙️ API Configuration")
-        self.setFixedSize(500, 460)
+        # Resizable + scrollable so all fields fit on any screen size (small VMs included).
+        self.setMinimumSize(500, 420)
+        self.resize(540, 600)
         self.setStyleSheet(STYLE + f"\nQDialog {{ background-color: {BG_SIDEBAR}; }}")
         
         self.config = load_config()
         self.engine: Optional[AIEngine] = None
-        
-        layout = QVBoxLayout(self)
+
+        _outer = QVBoxLayout(self)
+        _outer.setContentsMargins(0, 0, 0, 0)
+        _scroll = QScrollArea()
+        _scroll.setWidgetResizable(True)
+        _scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        _scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        _content = QWidget()
+        _scroll.setWidget(_content)
+        _outer.addWidget(_scroll)
+
+        layout = QVBoxLayout(_content)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(14)
         
@@ -2010,13 +2022,17 @@ class MainWindow(QMainWindow):
     def _try_init_engine(self):
         config = load_config()
         provider = config.get("provider", "gemini")
-        
-        has_key = False
-        if provider == "openai" and config.get("openai_api_key"):
-            has_key = True
-        elif provider == "gemini" and config.get("gemini_api_key"):
-            has_key = True
-        
+
+        has_gem = bool(config.get("gemini_api_key"))
+        has_oai = bool(config.get("openai_api_key"))
+        # If the chosen primary provider has no key but the OTHER one does, fall back to it
+        # so the app still starts whenever ANY key is configured.
+        if provider == "gemini" and not has_gem and has_oai:
+            provider = "openai"
+        elif provider == "openai" and not has_oai and has_gem:
+            provider = "gemini"
+        has_key = (provider == "gemini" and has_gem) or (provider == "openai" and has_oai)
+
         if has_key:
             try:
                 self.engine = AIEngine(
