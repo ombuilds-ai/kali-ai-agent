@@ -408,16 +408,21 @@ class AIEngine:
     """Wraps OpenAI or Gemini with Smart Compression, RAG, and Self-Reflection."""
 
     def __init__(self, provider: str, openai_key: str, openai_url: str, openai_model: str,
-                 gemini_key: str, gemini_model: str):
+                 gemini_key: str, gemini_model: str,
+                 custom_key: str = "", custom_url: str = "", custom_model: str = ""):
         self.provider = provider
         self.openai_key = openai_key
         self.openai_url = openai_url
         self.openai_model = openai_model
         self.gemini_key = gemini_key
         self.gemini_model = gemini_model
+        self.custom_key = custom_key
+        self.custom_url = custom_url
+        self.custom_model = custom_model
 
         self._init_openai()
         self._init_gemini()
+        self._init_custom()
 
         # Unified, provider-agnostic transcript shared across model/provider switches,
         # so the agent keeps full context no matter which model is active.
@@ -433,6 +438,31 @@ class AIEngine:
         else:
             self.openai_client = None
 
+    def _init_custom(self):
+        # Custom OpenAI-compatible endpoint (local LLM, vLLM, LM Studio, any gateway).
+        if self.custom_key or self.custom_url:
+            try:
+                self.custom_client = OpenAI(
+                    api_key=self.custom_key or "sk-none",
+                    base_url=self.custom_url or "https://api.openai.com/v1",
+                )
+            except Exception:
+                self.custom_client = None
+        else:
+            self.custom_client = None
+
+    def _active_client(self):
+        return self.custom_client if self.provider == "custom" else self.openai_client
+
+    def _active_model(self):
+        return self.custom_model if self.provider == "custom" else self.openai_model
+
+    def _oai_creds(self):
+        """(key, base_url, model) for the active OpenAI-compatible provider."""
+        if self.provider == "custom":
+            return self.custom_key, (self.custom_url or "https://api.openai.com/v1"), self.custom_model
+        return self.openai_key, self.openai_url, self.openai_model
+
     def _init_gemini(self):
         if self.gemini_key:
             genai.configure(api_key=self.gemini_key)
@@ -445,31 +475,43 @@ class AIEngine:
         self.gemini_chat = None
 
     def reconfigure(self, provider: str, openai_key: str, openai_url: str, openai_model: str,
-                    gemini_key: str, gemini_model: str) -> None:
+                    gemini_key: str, gemini_model: str,
+                    custom_key: str = "", custom_url: str = "", custom_model: str = "") -> None:
         self.provider = provider
         self.openai_key = openai_key
         self.openai_url = openai_url
         self.openai_model = openai_model
         self.gemini_key = gemini_key
         self.gemini_model = gemini_model
+        self.custom_key = custom_key
+        self.custom_url = custom_url
+        self.custom_model = custom_model
 
         self._init_openai()
         self._init_gemini()
+        self._init_custom()
 
     def reset_history(self) -> None:
         self.history.clear()
 
     # ── Multi-provider model routing ──────────────────────────────────────────
-    def set_active_model(self, model_id: str) -> tuple[bool, str]:
-        """Switch the active model (and provider, inferred from the id) WITHOUT
-        clearing the shared transcript — so context carries across the switch."""
-        prov = _provider_for_model(model_id)
+    def set_active_model(self, model_id: str, provider: Optional[str] = None) -> tuple[bool, str]:
+        """Switch the active model (and provider) WITHOUT clearing the shared transcript —
+        so context carries across the switch. `provider` disambiguates custom vs OpenRouter
+        (both OpenAI-compatible); if omitted it is inferred from the model id."""
+        prov = provider or _provider_for_model(model_id)
         if prov == "gemini":
             if not self.gemini_key:
                 return False, "Gemini API key is not configured."
             self.gemini_model = model_id.replace("models/", "")
             self.provider = "gemini"
             self._init_gemini()
+        elif prov == "custom":
+            if not (self.custom_key or self.custom_url):
+                return False, "Custom API is not configured."
+            self.custom_model = model_id
+            self.provider = "custom"
+            self._init_custom()
         else:
             if not self.openai_key:
                 return False, "OpenAI/OpenRouter API key is not configured."
@@ -479,8 +521,8 @@ class AIEngine:
         return True, f"Active model is now '{model_id}' ({self.provider})."
 
     def get_all_available_models(self) -> dict:
-        """Return {'gemini': [...], 'openai': [...]} for every configured provider."""
-        out = {"gemini": [], "openai": []}
+        """Return {'gemini': [...], 'openai': [...], 'custom': [...]} for every configured provider."""
+        out = {"gemini": [], "openai": [], "custom": []}
         if self.gemini_key:
             try:
                 out["gemini"] = self._get_gemini_models()
@@ -488,15 +530,25 @@ class AIEngine:
                 pass
         if self.openai_key:
             try:
-                out["openai"] = self._get_openai_models()
+                out["openai"] = self._get_openai_models(self.openai_key, self.openai_url)
             except Exception:
                 pass
+        if self.custom_key or self.custom_url:
+            try:
+                cm = self._get_openai_models(self.custom_key or "sk-none",
+                                             self.custom_url or "https://api.openai.com/v1",
+                                             allow_defaults=False)
+            except Exception:
+                cm = []
+            if not cm and self.custom_model:
+                cm = [self.custom_model]  # endpoint didn't list models; use the configured id
+            out["custom"] = cm
         return out
 
     def get_merged_models(self) -> list:
-        """All available model ids across both providers, de-duplicated and sorted."""
+        """All available model ids across all providers, de-duplicated and sorted."""
         d = self.get_all_available_models()
-        return sorted(set(d.get("gemini", []) + d.get("openai", [])))
+        return sorted(set(d.get("gemini", []) + d.get("openai", []) + d.get("custom", [])))
 
     # ── Feature 1: Smart Context Compression (Long-Memory Management) ─────────────
     def _compress_history_if_needed(self):
@@ -507,31 +559,31 @@ class AIEngine:
             self.history = head + tail
 
     def test_connection(self) -> tuple[bool, str]:
-        if self.provider == "openai":
-            return self._test_openai()
-        else:
+        if self.provider == "gemini":
             return self._test_gemini()
+        return self._test_openai()
 
     def _test_openai(self) -> tuple[bool, str]:
-        if not self.openai_key:
-            return False, "OpenAI API key is not set"
-        if not self.openai_url:
-            return False, "OpenAI Base URL is not set"
+        key, url, model = self._oai_creds()
+        if not key:
+            return False, "API key is not set"
+        if not url:
+            return False, "Base URL is not set"
 
         try:
-            client = OpenAI(api_key=self.openai_key, base_url=self.openai_url)
+            client = OpenAI(api_key=key, base_url=url)
             response = client.models.list()
             model_count = len(list(response.data)) if hasattr(response, 'data') else 0
             return True, f"Connected successfully! {model_count} models available"
         except Exception:
             try:
-                client = OpenAI(api_key=self.openai_key, base_url=self.openai_url)
+                client = OpenAI(api_key=key, base_url=url)
                 client.chat.completions.create(
-                    model=self.openai_model,
+                    model=model,
                     messages=[{"role": "user", "content": "Hi"}],
                     max_tokens=5
                 )
-                return True, f"Connected! Using model: {self.openai_model}"
+                return True, f"Connected! Using model: {model}"
             except Exception as e2:
                 return False, f"Connection failed: {str(e2)}"
 
@@ -553,13 +605,15 @@ class AIEngine:
             return False, f"Connection failed: {err[:150]}"
 
     def get_available_models(self) -> list[str]:
-        if self.provider == "openai":
-            return self._get_openai_models()
-        else:
+        if self.provider == "gemini":
             return self._get_gemini_models()
+        return self._get_openai_models()
 
-    def _get_openai_models(self) -> list[str]:
-        if not self.openai_key:
+    def _get_openai_models(self, key: Optional[str] = None, base_url: Optional[str] = None,
+                           allow_defaults: bool = True) -> list[str]:
+        if key is None or base_url is None:
+            key, base_url, _ = self._oai_creds()
+        if not key:
             return []
 
         free_only = getattr(self, "free_models_only", False)
@@ -568,9 +622,9 @@ class AIEngine:
         # This path carries pricing metadata, which we use to show only FREE models.
         try:
             import requests
-            base = self.openai_url.rstrip('/')
+            base = base_url.rstrip('/')
             url = base if base.endswith('/models') else (f"{base}/models" if base.endswith('/v1') else f"{base}/v1/models")
-            headers = {"Authorization": f"Bearer {self.openai_key}"}
+            headers = {"Authorization": f"Bearer {key}"}
             r = requests.get(url, headers=headers, timeout=10)
             if r.status_code == 200:
                 data = r.json()
@@ -592,7 +646,7 @@ class AIEngine:
 
         # Strategy 2: OpenAI Client SDK list() (no pricing — can only infer free by ':free' suffix).
         try:
-            client = OpenAI(api_key=self.openai_key, base_url=self.openai_url)
+            client = OpenAI(api_key=key, base_url=base_url)
             response = client.models.list()
             data = getattr(response, "data", [])
             models = [m.id if hasattr(m, "id") else (m.get("id") if isinstance(m, dict) else str(m)) for m in data]
@@ -604,7 +658,7 @@ class AIEngine:
         except Exception:
             pass
 
-        if free_only:
+        if free_only or not allow_defaults:
             return []
         return [
             "gpt-4o",
@@ -658,11 +712,12 @@ class AIEngine:
         image_paths: Optional[list[str]] = None,
     ) -> dict:
         self._compress_history_if_needed()
-        
-        if self.provider == "openai":
-            return self._send_openai(user_text, attach_screenshot, terminal_output, image_paths)
-        else:
+
+        if self.provider == "gemini":
             return self._send_gemini(user_text, attach_screenshot, terminal_output, image_paths)
+        else:
+            # "openai" and "custom" are both OpenAI-compatible.
+            return self._send_openai(user_text, attach_screenshot, terminal_output, image_paths)
 
     def _send_openai(
         self,
@@ -671,8 +726,10 @@ class AIEngine:
         terminal_output: Optional[str] = None,
         image_paths: Optional[list[str]] = None,
     ) -> dict:
-        if not self.openai_client:
-            raise RuntimeError("OpenAI client not initialized. Check API key.")
+        client = self._active_client()
+        model = self._active_model()
+        if not client:
+            raise RuntimeError("API client not initialized. Check your API key / base URL.")
 
         content: list[dict] = []
 
@@ -722,8 +779,8 @@ class AIEngine:
         )
 
         max_toks, temp = _effort_params(self.effort)
-        response = self.openai_client.chat.completions.create(
-            model=self.openai_model,
+        response = client.chat.completions.create(
+            model=model,
             messages=messages,
             max_tokens=max_toks,
             temperature=temp,

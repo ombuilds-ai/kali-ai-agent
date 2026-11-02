@@ -213,17 +213,23 @@ class CommandWorker(QThread):
 
 class ModelFetchWorker(QThread):
     models_ready = pyqtSignal(list)
+    models_map_ready = pyqtSignal(dict)   # {provider: [model_ids]} when tagged
     fetch_failed = pyqtSignal(str)
 
-    def __init__(self, engine: AIEngine, merged: bool = False):
+    def __init__(self, engine: AIEngine, merged: bool = False, tagged: bool = False):
         super().__init__()
         self.engine = engine
-        self.merged = merged  # True = models from BOTH providers combined
+        self.merged = merged   # True = all providers' models combined (flat list)
+        self.tagged = tagged   # True = per-provider dict (so selection knows the provider)
 
     def run(self):
         try:
-            models = self.engine.get_merged_models() if self.merged else self.engine.get_available_models()
-            self.models_ready.emit(models)
+            if self.tagged:
+                self.models_map_ready.emit(self.engine.get_all_available_models())
+            elif self.merged:
+                self.models_ready.emit(self.engine.get_merged_models())
+            else:
+                self.models_ready.emit(self.engine.get_available_models())
         except Exception as e:
             self.fetch_failed.emit(str(e))
 
@@ -461,7 +467,7 @@ class SettingsDialog(QDialog):
         provider_layout = QHBoxLayout()
         provider_layout.addWidget(QLabel("AI Provider:"))
         self.provider_combo = QComboBox()
-        self.provider_combo.addItems(["openai", "gemini"])
+        self.provider_combo.addItems(["openai", "gemini", "custom"])
         self.provider_combo.setCurrentText(self.config.get("provider", "gemini"))
         self.provider_combo.currentTextChanged.connect(self._on_provider_changed)
         provider_layout.addWidget(self.provider_combo)
@@ -512,7 +518,23 @@ class SettingsDialog(QDialog):
         gemini_layout.addRow("Model:", self.gemini_model)
         layout.addWidget(self.gemini_group)
 
-        # Free-models filter applies to BOTH providers, so it lives outside the groups.
+        # Third provider: a fully custom OpenAI-compatible endpoint.
+        self.custom_group = QGroupBox("Custom API (OpenAI-compatible: local LLM / vLLM / LM Studio / any gateway)")
+        self.custom_group.setStyleSheet(f"QGroupBox {{ border: 1px solid {BORDER_COLOR}; border-radius: 8px; margin-top: 8px; font-weight: bold; }} QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 5px; }}")
+        custom_layout = QFormLayout(self.custom_group)
+        custom_layout.setContentsMargins(10, 14, 10, 10)
+        self.custom_url = QLineEdit(self.config.get("custom_base_url", ""))
+        self.custom_url.setPlaceholderText("e.g. http://localhost:11434/v1  or  https://your-gateway/v1")
+        self.custom_key = QLineEdit(self.config.get("custom_api_key", ""))
+        self.custom_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.custom_model = QLineEdit(self.config.get("custom_model", ""))
+        self.custom_model.setPlaceholderText("model id, e.g. llama3.1:8b  or  my-model")
+        custom_layout.addRow("Base URL:", self.custom_url)
+        custom_layout.addRow("API Key:", self.custom_key)
+        custom_layout.addRow("Model ID:", self.custom_model)
+        layout.addWidget(self.custom_group)
+
+        # Free-models filter applies to all providers, so it lives outside the groups.
         self.free_only_chk = QCheckBox("🆓 Show FREE models only (Gemini flash/gemma + OpenRouter :free)")
         self.free_only_chk.setChecked(bool(self.config.get("free_models_only", False)))
         self.free_only_chk.setToolTip("Lists only no-cost models for whichever provider you use.")
@@ -583,6 +605,7 @@ class SettingsDialog(QDialog):
         # just picks the PRIMARY/default provider; the agent can use models from both.
         self.openai_group.setVisible(True)
         self.gemini_group.setVisible(True)
+        self.custom_group.setVisible(True)
         
     def _auto_fetch_models(self):
         provider = self.provider_combo.currentText()
@@ -600,7 +623,10 @@ class SettingsDialog(QDialog):
                 openai_url=self.openai_url.text().strip(),
                 openai_model=self.openai_model.currentText().strip(),
                 gemini_key=self.gemini_key.text().strip(),
-                gemini_model=self.gemini_model.currentText().strip()
+                gemini_model=self.gemini_model.currentText().strip(),
+                custom_key=self.custom_key.text().strip(),
+                custom_url=self.custom_url.text().strip(),
+                custom_model=self.custom_model.text().strip()
             )
             self.engine.free_models_only = self.free_only_chk.isChecked()
             self.worker = ModelFetchWorker(self.engine)
@@ -623,7 +649,10 @@ class SettingsDialog(QDialog):
                 openai_url=self.openai_url.text().strip(),
                 openai_model=self.openai_model.currentText().strip(),
                 gemini_key=self.gemini_key.text().strip(),
-                gemini_model=self.gemini_model.currentText().strip()
+                gemini_model=self.gemini_model.currentText().strip(),
+                custom_key=self.custom_key.text().strip(),
+                custom_url=self.custom_url.text().strip(),
+                custom_model=self.custom_model.text().strip()
             )
             self.engine.free_models_only = self.free_only_chk.isChecked()
             self.worker = ModelFetchWorker(self.engine)
@@ -678,6 +707,9 @@ class SettingsDialog(QDialog):
         self.config["openai_model"] = self.openai_model.currentText().strip()
         self.config["gemini_api_key"] = self.gemini_key.text().strip()
         self.config["gemini_model"] = self.gemini_model.currentText().strip()
+        self.config["custom_base_url"] = self.custom_url.text().strip()
+        self.config["custom_api_key"] = self.custom_key.text().strip()
+        self.config["custom_model"] = self.custom_model.text().strip()
         self.config["operator_mode"] = self.operator_chk.isChecked()
         self.config["free_models_only"] = self.free_only_chk.isChecked()
         save_config(self.config)
@@ -1361,6 +1393,7 @@ class MainWindow(QMainWindow):
         self._pending_cmd_timeout = None  # AI-requested timeout for the next command
         self._vision_control = False   # Live Screen Control: watch screen + auto GUI control
         self._normal_turn_limit = 25   # autonomous cap outside vision mode
+        self._model_provider = {}      # model_id -> provider (for dropdown routing)
         self.cmd_worker = None
         
         config = load_config()
@@ -2025,13 +2058,17 @@ class MainWindow(QMainWindow):
 
         has_gem = bool(config.get("gemini_api_key"))
         has_oai = bool(config.get("openai_api_key"))
-        # If the chosen primary provider has no key but the OTHER one does, fall back to it
-        # so the app still starts whenever ANY key is configured.
-        if provider == "gemini" and not has_gem and has_oai:
-            provider = "openai"
-        elif provider == "openai" and not has_oai and has_gem:
-            provider = "gemini"
-        has_key = (provider == "gemini" and has_gem) or (provider == "openai" and has_oai)
+        has_cus = bool(config.get("custom_api_key") or config.get("custom_base_url"))
+        # If the chosen primary provider has no key but another does, fall back to it
+        # so the app starts whenever ANY provider is configured.
+        if provider == "gemini" and not has_gem:
+            provider = "openai" if has_oai else ("custom" if has_cus else provider)
+        elif provider == "openai" and not has_oai:
+            provider = "gemini" if has_gem else ("custom" if has_cus else provider)
+        elif provider == "custom" and not has_cus:
+            provider = "gemini" if has_gem else ("openai" if has_oai else provider)
+        has_key = ((provider == "gemini" and has_gem) or (provider == "openai" and has_oai)
+                   or (provider == "custom" and has_cus))
 
         if has_key:
             try:
@@ -2041,7 +2078,10 @@ class MainWindow(QMainWindow):
                     openai_url=config.get("openai_base_url", "https://openrouter.ai/api/v1"),
                     openai_model=config.get("openai_model", "openai/gpt-4o"),
                     gemini_key=config.get("gemini_api_key", ""),
-                    gemini_model=config.get("gemini_model", "gemini-2.0-flash")
+                    gemini_model=config.get("gemini_model", "gemini-2.0-flash"),
+                    custom_key=config.get("custom_api_key", ""),
+                    custom_url=config.get("custom_base_url", ""),
+                    custom_model=config.get("custom_model", "")
                 )
                 model_name = config.get(f"{provider}_model", "unknown")
                 self.status_lbl.setText(f"● {provider.upper()} | Active")
@@ -2055,9 +2095,9 @@ class MainWindow(QMainWindow):
                 
                 self.engine.free_models_only = config.get("free_models_only", False)
                 self.engine.effort = config.get("effort_level", "balanced")
-                # Dashboard dropdown lists models from BOTH configured providers.
-                self.fetch_worker = ModelFetchWorker(self.engine, merged=True)
-                self.fetch_worker.models_ready.connect(self._on_dashboard_models_ready)
+                # Dashboard dropdown lists models from ALL configured providers (tagged).
+                self.fetch_worker = ModelFetchWorker(self.engine, tagged=True)
+                self.fetch_worker.models_map_ready.connect(self._on_dashboard_models_map_ready)
                 self.fetch_worker.start()
                 
             except Exception:
@@ -2080,11 +2120,36 @@ class MainWindow(QMainWindow):
             self.model_selector.setCurrentIndex(0)
         self.model_selector.blockSignals(False)
 
+    def _on_dashboard_models_map_ready(self, by_provider: dict):
+        """Populate the model dropdown from all providers, remembering each model's provider."""
+        self._model_provider = {}
+        items = []
+        for prov in ("gemini", "openai", "custom"):
+            for m in by_provider.get(prov, []):
+                self._model_provider[m] = prov   # last wins on rare id collisions
+                items.append(m)
+        items = sorted(set(items))
+        if not items:
+            return
+        config = load_config()
+        provider = config.get("provider", "gemini")
+        cur_model = config.get(f"{provider}_model", "")
+        self.model_selector.blockSignals(True)
+        self.model_selector.clear()
+        self.model_selector.addItems(items)
+        if cur_model in items:
+            self.model_selector.setCurrentText(cur_model)
+        else:
+            self.model_selector.setCurrentIndex(0)
+        self.model_selector.blockSignals(False)
+
     def _on_dashboard_model_changed(self, new_model: str):
         if not new_model or not self.engine:
             return
-        # Switch to the chosen model (provider inferred); shared transcript is preserved.
-        ok, msg = self.engine.set_active_model(new_model)
+        # Switch to the chosen model; use the remembered provider (custom vs OpenRouter can't
+        # be told apart by id alone). Shared transcript is preserved.
+        prov = getattr(self, "_model_provider", {}).get(new_model)
+        ok, msg = self.engine.set_active_model(new_model, prov)
         if not ok:
             self._add_bubble("system", f"⚠️ {msg}")
             return
@@ -2092,6 +2157,8 @@ class MainWindow(QMainWindow):
         config["provider"] = self.engine.provider
         if self.engine.provider == "gemini":
             config["gemini_model"] = self.engine.gemini_model
+        elif self.engine.provider == "custom":
+            config["custom_model"] = self.engine.custom_model
         else:
             config["openai_model"] = self.engine.openai_model
         save_config(config)
@@ -2102,7 +2169,8 @@ class MainWindow(QMainWindow):
         """Handle an AI-requested model switch (switch_model field)."""
         if not self.engine or not model_id:
             return
-        ok, msg = self.engine.set_active_model(model_id)
+        prov = getattr(self, "_model_provider", {}).get(model_id)
+        ok, msg = self.engine.set_active_model(model_id, prov)
         if not ok:
             self._add_bubble("system", f"⚠️ Could not switch model: {msg}")
             return
@@ -2115,6 +2183,8 @@ class MainWindow(QMainWindow):
         config["provider"] = self.engine.provider
         if self.engine.provider == "gemini":
             config["gemini_model"] = self.engine.gemini_model
+        elif self.engine.provider == "custom":
+            config["custom_model"] = self.engine.custom_model
         else:
             config["openai_model"] = self.engine.openai_model
         save_config(config)

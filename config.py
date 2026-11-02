@@ -16,6 +16,9 @@ DEFAULT_CONFIG = {
     "openai_model": "openai/gpt-4o",
     "gemini_api_key": "",
     "gemini_model": "gemini-2.0-flash",
+    "custom_api_key": "",
+    "custom_base_url": "",
+    "custom_model": "",
     "font_size": 13,
     "operator_mode": True,       # never refuse authorized security tasks
     "free_models_only": False,   # OpenRouter: show only free models
