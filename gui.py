@@ -1045,15 +1045,15 @@ class ChatBubble(QFrame):
         self.text_browser.setOpenExternalLinks(True)
         self.text_browser.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         self.text_browser.setStyleSheet("background: transparent; border: none; color: #f8fafc; selection-background-color: #3b82f6; selection-color: white;")
-        
+        # No inner scrollbars — the whole chat area scrolls; the bubble sizes to its content.
+        self.text_browser.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.text_browser.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.text_browser.setLineWrapMode(QTextBrowser.LineWrapMode.WidgetWidth)
+
         html = _format_message_html(text)
         self.text_browser.setHtml(html)
-        
-        self.text_browser.document().adjustSize()
-        doc_height = int(self.text_browser.document().size().height())
-        self.text_browser.setFixedHeight(max(30, doc_height + 12))
-        
         box_layout.addWidget(self.text_browser)
+        self._recompute_height()
         
         # Interactive Decision Option Buttons (if AI provided options)
         if options and isinstance(options, list):
@@ -1083,9 +1083,23 @@ class ChatBubble(QFrame):
     def update_font_size(self, font_size: int):
         html = _format_message_html(self.raw_text, font_size=font_size)
         self.text_browser.setHtml(html)
-        self.text_browser.document().adjustSize()
-        doc_height = int(self.text_browser.document().size().height())
-        self.text_browser.setFixedHeight(max(30, doc_height + 12))
+        self._recompute_height()
+
+    def _recompute_height(self):
+        """Size the bubble to its content at the ACTUAL render width (prevents the
+        'bahut lamba' bug where height is measured before the widget has a real width)."""
+        doc = self.text_browser.document()
+        w = self.text_browser.viewport().width()
+        if w <= 10:
+            w = 600  # sensible fallback until the first real layout pass
+        doc.setTextWidth(w)
+        h = int(doc.size().height()) + 10
+        self.text_browser.setFixedHeight(max(28, h))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Recompute height whenever the bubble's width changes (correct wrapping → correct height).
+        self._recompute_height()
 
 
 # ── Command Intercept Banner ───────────────────────────────────────────────────
