@@ -1480,6 +1480,7 @@ class MainWindow(QMainWindow):
         self._pending_cmd_timeout = None  # AI-requested timeout for the next command
         self._last_cmd_failed = False     # drive the structured auto-repair reflection
         self._consecutive_failures = 0    # stop runaway retry loops
+        self._current_plan = []           # persistent task-tree, re-injected each turn
         self._vision_control = False   # Live Screen Control: watch screen + auto GUI control
         self._normal_turn_limit = 25   # autonomous cap outside vision mode
         self._model_provider = {}      # model_id -> provider (for dropdown routing)
@@ -2520,6 +2521,7 @@ class MainWindow(QMainWindow):
         self._stop_requested = False
         self._last_cmd_failed = False
         self._consecutive_failures = 0
+        self._current_plan = []
         self._last_user_text = text
         self._set_busy_state(True)
         
@@ -2554,6 +2556,7 @@ class MainWindow(QMainWindow):
         
         if plan:
             self.plan_tracker.update_plan(plan)
+            self._current_plan = plan  # persist the task-tree so it carries across turns
             
         display = response_text or thought or "(No response message provided)"
         self._add_bubble("assistant", display, confidence_score=confidence, impact_risk=risk, options=options)
@@ -2979,6 +2982,27 @@ class MainWindow(QMainWindow):
                 "timeout or run it as a background job. Then issue a CORRECTED next step — do NOT repeat the same command unchanged.\n\n"
                 + user_prompt
             )
+
+        # Persistent task-tree: re-inject the current plan each turn so small models never lose the thread.
+        try:
+            if self._current_plan:
+                parts = []
+                for i, step in enumerate(self._current_plan, 1):
+                    if isinstance(step, dict):
+                        title = step.get("title") or step.get("step") or step.get("task") or step.get("name") or str(step)
+                        status = step.get("status") or step.get("state") or "pending"
+                    else:
+                        title = str(step)
+                        status = "pending"
+                    parts.append(f"{i}. {title} [{status}]")
+                plan_str = "; ".join(parts)
+                user_prompt = (
+                    "[CURRENT PLAN — this is your task tree. Keep working through it, update each step's "
+                    "status (pending/in_progress/done), and resend the full plan in your `plan` field so it "
+                    f"stays in sync]:\n{plan_str}\n\n" + user_prompt
+                )
+        except Exception:
+            pass
 
         self.worker = AIWorker(
             engine=self.engine,
