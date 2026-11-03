@@ -1487,7 +1487,15 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Kali-AI Agent by Om | Advanced Security Controller v3.0")
-        self.resize(1320, 820)
+        # Size to fit the actual screen and NEVER grow beyond it — content scrolls inside.
+        try:
+            _avail = QApplication.primaryScreen().availableGeometry()
+            _w = min(1320, _avail.width())
+            _h = min(820, _avail.height())
+            self.resize(_w, _h)
+            self.setMaximumSize(_avail.width(), _avail.height())
+        except Exception:
+            self.resize(1100, 700)
         self.setStyleSheet(STYLE)
         
         self.engine: Optional[AIEngine] = None
@@ -1815,6 +1823,10 @@ class MainWindow(QMainWindow):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Expanding + small minimum so the chat area absorbs/scrolls content instead of
+        # pushing the whole window taller than the screen.
+        self.scroll_area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.scroll_area.setMinimumHeight(80)
         self.scroll_area.verticalScrollBar().rangeChanged.connect(self._smooth_scroll_to_bottom)
         
         self.messages_widget = QWidget()
