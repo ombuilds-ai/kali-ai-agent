@@ -1478,6 +1478,8 @@ class MainWindow(QMainWindow):
         self._awaiting_input = False   # a running command is paused at an interactive prompt
         self._skip_ai_followup = False # suppress the AI loop after a manual user command
         self._pending_cmd_timeout = None  # AI-requested timeout for the next command
+        self._last_cmd_failed = False     # drive the structured auto-repair reflection
+        self._consecutive_failures = 0    # stop runaway retry loops
         self._vision_control = False   # Live Screen Control: watch screen + auto GUI control
         self._normal_turn_limit = 25   # autonomous cap outside vision mode
         self._model_provider = {}      # model_id -> provider (for dropdown routing)
@@ -2513,9 +2515,11 @@ class MainWindow(QMainWindow):
                 display_text += f"\n[IMG:{path}]"
                 
         self._add_bubble("user", display_text)
-        # Fresh user task: reset the autonomous-loop guard and stop flag.
+        # Fresh user task: reset the autonomous-loop guard, stop flag, and failure tracking.
         self._auto_turn_count = 0
         self._stop_requested = False
+        self._last_cmd_failed = False
+        self._consecutive_failures = 0
         self._last_user_text = text
         self._set_busy_state(True)
         
@@ -2904,12 +2908,20 @@ class MainWindow(QMainWindow):
         self._clear_awaiting_style()
 
         # Self-learning: record real shell commands (not file/gui/input pseudo-actions).
-        if (command_text and not exec_res.blocked
-                and not command_text.startswith(("GUI:", "read_file:", "write_file:", "send_input", "job:", "ghidra:"))):
+        is_shell_cmd = (command_text and not command_text.startswith(
+            ("GUI:", "read_file:", "write_file:", "send_input", "job:", "ghidra:")))
+        if is_shell_cmd and not exec_res.blocked:
             try:
                 memory.learn_from_interaction(self._last_user_text, command_text, exec_res.success)
             except Exception:
                 pass
+            # Track failures to drive the structured auto-repair reflection (and stop loops).
+            if exec_res.success:
+                self._consecutive_failures = 0
+                self._last_cmd_failed = False
+            else:
+                self._consecutive_failures += 1
+                self._last_cmd_failed = True
 
         if self._stop_requested:
             self._set_busy_state(False)
@@ -2922,6 +2934,15 @@ class MainWindow(QMainWindow):
             return
 
         if self._is_autonomous and not exec_res.blocked:
+            if self._consecutive_failures >= 4:
+                self._add_bubble(
+                    "system",
+                    "⏹ **4 commands failed in a row** — stopping to avoid a loop. Tell me what changed "
+                    "or how to proceed (wrong target, missing tool, or different approach?).",
+                )
+                self._consecutive_failures = 0
+                self._set_busy_state(False)
+                return
             self._auto_turn_count += 1
             if self._auto_turn_count > self._auto_turn_limit:
                 self._add_bubble(
@@ -2949,6 +2970,15 @@ class MainWindow(QMainWindow):
             self._pending_steering_notes.clear()
         if self._vision_control:
             user_prompt = self._vision_preamble() + user_prompt
+        # Structured reflection: after a failure, force root-cause diagnosis + a corrected command.
+        if self._last_cmd_failed:
+            user_prompt = (
+                "[REFLECT & FIX] The previous command FAILED (see the execution status). In your `thought`, "
+                "diagnose the ROOT CAUSE first: 'command not found' → install the package; 'permission denied' → use sudo; "
+                "wrong flag/syntax → correct it; host down / no route → verify reachability & scope; timed out → raise the "
+                "timeout or run it as a background job. Then issue a CORRECTED next step — do NOT repeat the same command unchanged.\n\n"
+                + user_prompt
+            )
 
         self.worker = AIWorker(
             engine=self.engine,

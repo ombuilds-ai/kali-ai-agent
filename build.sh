@@ -91,6 +91,7 @@ pyinstaller \
     --add-data "screenshot.py:." \
     --add-data "config.py:." \
     --add-data "environment.py:." \
+    --add-data "knowledge.py:." \
     --add-data "shell_session.py:." \
     --add-data "tools.py:." \
     --add-data "jobs.py:." \

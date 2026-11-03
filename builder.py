@@ -15,6 +15,7 @@ files_to_embed = [
     'guardrails.py',
     'screenshot.py',
     'environment.py',
+    'knowledge.py',
     'shell_session.py',
     'tools.py',
     'jobs.py',

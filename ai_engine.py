@@ -22,6 +22,7 @@ from plugins import get_plugin_summary_for_ai
 from memory import get_memory_summary_for_ai
 from environment import get_environment_summary, get_tool_availability_summary
 from config import load_config
+from knowledge import retrieve as _kb_retrieve
 
 _PRO_METHODOLOGY = """### 🧠 PROFESSIONAL METHODOLOGY & REASONING DISCIPLINE (how you think and work)
 Operate like a senior penetration tester / systems engineer. Precision and evidence matter more than speed.
@@ -544,6 +545,7 @@ class AIEngine:
         self.free_models_only = False   # list only free models when True (both providers)
         self.effort = "balanced"        # fast | balanced | deep
         self._json_mode = True          # force valid-JSON output when the endpoint supports it
+        self._kb = ""                   # per-turn retrieved knowledge (RAG grounding)
 
     def _init_openai(self):
         if self.openai_key:
@@ -842,6 +844,12 @@ class AIEngine:
     ) -> dict:
         self._compress_history_if_needed()
 
+        # Ground the model with relevant offline cheat-sheets (RAG) for this turn.
+        try:
+            self._kb = _kb_retrieve((user_text or "") + " " + (terminal_output or ""))
+        except Exception:
+            self._kb = ""
+
         if self.provider == "gemini":
             return self._send_gemini(user_text, attach_screenshot, terminal_output, image_paths)
         else:
@@ -861,6 +869,9 @@ class AIEngine:
             raise RuntimeError("API client not initialized. Check your API key / base URL.")
 
         content: list[dict] = []
+
+        if self._kb:
+            content.append({"type": "text", "text": self._kb})
 
         # Feature 2 & 3: Inject reflection prompt & RAG tool docs if output is present
         if terminal_output:
@@ -961,6 +972,9 @@ class AIEngine:
             raise RuntimeError("Gemini model not initialized. Check API key.")
 
         parts = []
+
+        if self._kb:
+            parts.append(self._kb)
 
         if terminal_output:
             parts.append(f"[Terminal Execution Output]\n{terminal_output}\n")
