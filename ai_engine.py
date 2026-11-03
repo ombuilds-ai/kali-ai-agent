@@ -73,12 +73,21 @@ def get_system_prompt() -> str:
         cfg = load_config()
         operator_mode = cfg.get("operator_mode", True)
         effort = cfg.get("effort_level", "balanced")
+        small = _is_small_model(_active_model_id(cfg))
     except Exception:
-        operator_mode, effort = True, "balanced"
+        operator_mode, effort, small = True, "balanced", False
     mandate = _OPERATOR_MANDATE if operator_mode else ""
     effort_hint = _EFFORT_HINT.get(effort, _EFFORT_HINT["balanced"])
-    # In fast mode, drop the long methodology block to cut latency/tokens.
-    methodology = "" if effort == "fast" else _PRO_METHODOLOGY
+    # Drop the long methodology block in fast mode OR for small models (they focus better
+    # with a short, concrete prompt). Few-shot examples are always included.
+    methodology = "" if (effort == "fast" or small) else _PRO_METHODOLOGY
+    fewshot = _FEWSHOT
+    small_note = (
+        "\n### IMPORTANT (small-model mode): Keep replies SHORT. Do exactly ONE action per turn. "
+        "Always output a single valid JSON object exactly like the Examples — no text outside the JSON. "
+        "Put any command fully inside the \"command\" field.\n"
+        if small else ""
+    )
     return f"""You are Kali-AI Agent by Om, a world-class cyber security analyst and autonomous penetration testing co-pilot operating directly inside Kali Linux.
 You talk naturally like an expert pair-programming AI assistant (similar to Antigravity AI).
 
@@ -217,7 +226,9 @@ You MUST format your response STRICTLY as a JSON object inside a markdown code b
   }}
 }}
 ```
-"""
+
+{fewshot}
+{small_note}"""
 
 
 # ── Strict Schema Validation & Fallback Parser ──────────────────────────────────
@@ -320,7 +331,24 @@ def _extract_and_validate_json(raw: str) -> dict:
     result["confidence_score"] = max(0, min(100, result["confidence_score"]))
     if result["impact_risk"] not in ["Low", "Medium", "High"]:
         result["impact_risk"] = "Low"
-        
+
+    # ── Robustness for SMALL / weak models (they use varied words & misplace fields) ──
+    _syn = {
+        "shell": "bash", "run": "bash", "command": "bash", "execute": "bash", "cmd": "bash",
+        "terminal": "bash", "run_command": "bash", "exec": "bash",
+        "message": "chat", "reply": "chat", "talk": "chat", "respond": "chat",
+        "none": "chat", "text": "chat", "answer": "chat", "": "chat",
+    }
+    result["action_type"] = _syn.get(result["action_type"], result["action_type"])
+
+    # If it chose bash but put the command in a code block (or forgot the field), recover it.
+    if result["action_type"] == "bash" and not result["command"]:
+        mcb = re.search(r"```(?:bash|sh|shell)?\s*\n(.*?)```", raw, re.DOTALL)
+        if mcb and mcb.group(1).strip():
+            result["command"] = mcb.group(1).strip()
+        else:
+            result["action_type"] = "chat"  # no runnable command → don't stall, just chat
+
     return result
 
 
@@ -342,6 +370,53 @@ _EFFORT_HINT = {
 
 def _effort_params(effort: str):
     return _EFFORT.get(effort, _EFFORT["balanced"])
+
+
+# Few-shot examples — small/weak models copy these patterns and produce valid JSON.
+_FEWSHOT = """### Examples — reply with EXACTLY ONE JSON object shaped like these:
+Chatting:
+```json
+{"action_type":"chat","response_message":"Haan bhai, bolo — kya karna hai?"}
+```
+Running a command:
+```json
+{"thought":"Need open ports first.","action_type":"bash","command":"sudo nmap -sV 192.168.1.10","response_message":"Running a service scan.","confidence_score":90,"impact_risk":"Low"}
+```
+Finished the task:
+```json
+{"action_type":"chat","task_complete":true,"response_message":"Done — 22/80/443 open."}
+```
+Rules for your reply: output ONLY the JSON object, nothing before/after. One action per turn. Always include "action_type" and "response_message". For a command, put the FULL command in "command" (not in prose)."""
+
+
+def _active_model_id(cfg: dict) -> str:
+    prov = cfg.get("provider", "gemini")
+    if prov == "gemini":
+        return cfg.get("gemini_model", "")
+    if prov == "custom":
+        return cfg.get("custom_model", "")
+    return cfg.get("openai_model", "")
+
+
+def _is_small_model(model_id: str) -> bool:
+    """Heuristic: is this a small/weak model that needs a simpler prompt?
+
+    Token-based so it doesn't false-match (e.g. 'geMINI' must NOT count as 'mini',
+    and 'gemini-1.5-pro' is NOT small while 'gemini-2.0-flash-lite' / '*-8b' are)."""
+    m = (model_id or "").lower()
+    tokens = re.split(r"[^a-z0-9.]+", m)
+    word_tags = {"mini", "small", "lite", "tiny", "nano", "micro", "edge"}
+    for t in tokens:
+        if t in word_tags:
+            return True
+        mt = re.fullmatch(r"(\d+(?:\.\d+)?)b", t)  # size like 7b, 8b, 1.5b
+        if mt:
+            try:
+                if float(mt.group(1)) <= 9:  # <=9B treated as "small"
+                    return True
+            except ValueError:
+                pass
+    return False
 
 
 def _is_free_model(m: dict) -> bool:
@@ -493,6 +568,13 @@ class AIEngine:
 
     def _active_model(self):
         return self.custom_model if self.provider == "custom" else self.openai_model
+
+    def _current_model_id(self) -> str:
+        if self.provider == "gemini":
+            return self.gemini_model
+        if self.provider == "custom":
+            return self.custom_model
+        return self.openai_model
 
     def _oai_creds(self):
         """(key, base_url, model) for the active OpenAI-compatible provider."""
@@ -825,6 +907,8 @@ class AIEngine:
         )
 
         max_toks, temp = _effort_params(self.effort)
+        if _is_small_model(self._current_model_id()):
+            temp = min(temp, 0.35)  # small models follow the JSON format better at low temperature
         response = client.chat.completions.create(
             model=model,
             messages=messages,
@@ -918,6 +1002,8 @@ class AIEngine:
         contents.append({"role": "user", "parts": parts})
 
         max_toks, temp = _effort_params(self.effort)
+        if _is_small_model(self._current_model_id()):
+            temp = min(temp, 0.35)  # small models follow the JSON format better at low temperature
         try:
             response = self.gemini_model_obj.generate_content(
                 contents,
