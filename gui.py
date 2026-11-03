@@ -1,7 +1,6 @@
 import sys
 import os
 import re
-import shlex
 import time
 from typing import Optional
 
@@ -1515,7 +1514,6 @@ class MainWindow(QMainWindow):
         self._skip_ai_followup = False # suppress the AI loop after a manual user command
         self._pending_cmd_timeout = None  # AI-requested timeout for the next command
         self._vision_control = False   # Live Screen Control: watch screen + auto GUI control
-        self._opencode_mode = False    # delegate chat prompts to the `opencode` CLI
         self._normal_turn_limit = 25   # autonomous cap outside vision mode
         self._model_provider = {}      # model_id -> provider (for dropdown routing)
         self._custom_creds = {}        # model_id -> (key, url, model) for extra custom endpoints
@@ -1690,15 +1688,6 @@ class MainWindow(QMainWindow):
         self.chk_vision.toggled.connect(self._toggle_vision_control)
         sidebar_layout.addWidget(self.chk_vision)
 
-        self.chk_opencode = QCheckBox("🧩 OpenCode Mode")
-        self.chk_opencode.setChecked(False)
-        self.chk_opencode.setToolTip(
-            "When ON, your messages are handled by the `opencode` CLI (its models do the work)\n"
-            "and its output appears here. Requires opencode installed & configured with a model."
-        )
-        self.chk_opencode.setStyleSheet(_chk_style)
-        self.chk_opencode.toggled.connect(self._toggle_opencode_mode)
-        sidebar_layout.addWidget(self.chk_opencode)
         
         sidebar_layout.addStretch()
         
@@ -2444,38 +2433,6 @@ class MainWindow(QMainWindow):
                 self.engine.screenshot_detail = "low"
             self._add_bubble("system", "🖥 Live Screen Control OFF — back to normal (GUI actions need approval).")
 
-    def _toggle_opencode_mode(self, on: bool):
-        self._opencode_mode = on
-        if on:
-            self._add_bubble(
-                "system",
-                "🧩 **OpenCode Mode ON.** Your messages now go to the `opencode` CLI and its "
-                "output appears here. Make sure opencode is installed and configured with a "
-                "(free) model. Not installed? Run:\n```bash\ncurl -fsSL https://opencode.ai/install | bash\n```\n"
-                "or `npm i -g opencode-ai`. Turn this off to use the built-in agent again.",
-            )
-        else:
-            self._add_bubble("system", "🧩 OpenCode Mode OFF — back to the built-in agent.")
-
-    def _run_opencode(self, prompt: str):
-        """Delegate a prompt to the opencode CLI (headless) and stream its output here."""
-        cmd = f"opencode run {shlex.quote(prompt)}"
-        self.terminal_log.appendPlainText(f"\n[OPENCODE] {cmd}")
-        self.terminal_log.verticalScrollBar().setValue(self.terminal_log.verticalScrollBar().maximum())
-        self._set_busy_state(True)
-        self.cmd_worker = CommandWorker(lambda cb, c=cmd: run_bash(c, timeout=0, on_output=cb))
-        self.cmd_worker.output_chunk.connect(self._on_cmd_output_chunk)
-        self.cmd_worker.finished_result.connect(self._on_opencode_done)
-        self.cmd_worker.start()
-
-    def _on_opencode_done(self, exec_res):
-        out = exec_res.combined_output() if hasattr(exec_res, "combined_output") else ""
-        if "command not found" in out.lower() or "not found" in out.lower() and "opencode" in out.lower():
-            self._add_bubble("system", "⚠️ `opencode` not found. Install it:\n```bash\ncurl -fsSL https://opencode.ai/install | bash\n```")
-        else:
-            self._add_bubble("assistant", out or "(opencode produced no output)")
-        self._set_busy_state(False)
-
     def _vision_preamble(self) -> str:
         w, h = get_screen_size()
         return (
@@ -2549,8 +2506,7 @@ class MainWindow(QMainWindow):
             self._rebuild_preview_strip()
 
     def _on_send(self):
-        # OpenCode Mode delegates to the opencode CLI, so it doesn't need our API engine.
-        if not self.engine and not self._opencode_mode:
+        if not self.engine:
             QMessageBox.warning(self, "API Config Missing", "Please configure your API Key in Settings first.")
             self._open_settings()
             return
@@ -2577,12 +2533,6 @@ class MainWindow(QMainWindow):
             self._add_bubble("user", f"💬 **Mid-Execution Note**: {text}")
             self._pending_steering_notes.append(text)
             self.terminal_log.appendPlainText(f"\n[MID-EXECUTION STEERING QUEUED]: {text}\n")
-            return
-
-        # OpenCode Mode: hand the prompt to the opencode CLI instead of the built-in engine.
-        if self._opencode_mode and text:
-            self._add_bubble("user", text)
-            self._run_opencode(text)
             return
         
         display_text = text
