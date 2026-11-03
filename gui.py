@@ -563,27 +563,32 @@ class SettingsDialog(QDialog):
         custom_layout.addRow("Model ID:", self.custom_model)
         layout.addWidget(self.custom_group)
 
-        # Unlimited EXTRA custom endpoints — one per line: label | base_url | api_key | model
-        self.extra_group = QGroupBox("More Custom APIs (unlimited — one per line:  label | base_url | api_key | model)")
+        # Unlimited EXTRA custom endpoints — each added via the ＋ button as its own
+        # 3-field block (Base URL, API Key, Model ID).
+        self.extra_group = QGroupBox("More Custom APIs — click ＋ to add another endpoint")
         self.extra_group.setStyleSheet(self.custom_group.styleSheet())
         extra_v = QVBoxLayout(self.extra_group)
         extra_v.setContentsMargins(10, 14, 10, 10)
-        self.extra_apis_edit = QPlainTextEdit()
-        self.extra_apis_edit.setPlaceholderText(
-            "my-local | http://localhost:11434/v1 | ollama | llama3.1:8b\n"
-            "work-gpt | https://gw.example/v1 | sk-xxxx | gpt-4o-mini"
+        extra_v.setSpacing(8)
+
+        self._custom_rows = []
+        self._extra_rows_layout = QVBoxLayout()
+        self._extra_rows_layout.setSpacing(8)
+        extra_v.addLayout(self._extra_rows_layout)
+
+        self.btn_add_custom = QPushButton("＋ Add Custom API")
+        self.btn_add_custom.setStyleSheet(
+            f"QPushButton {{ background: {ACCENT_BLUE}; color: #0a0b14; font-weight: 700; "
+            f"border: none; border-radius: 8px; padding: 7px; }}"
+            f"QPushButton:hover {{ background: #8f72ff; }}"
         )
-        self.extra_apis_edit.setFixedHeight(90)
-        self.extra_apis_edit.setStyleSheet(
-            f"QPlainTextEdit {{ background:#0c0e1a; border:1px solid {BORDER_COLOR}; border-radius:8px; "
-            f"padding:6px; font-family:Consolas,monospace; font-size:11px; color:#9fd0b0; }}"
-        )
-        _lines = []
-        for api in self.config.get("custom_apis", []):
-            _lines.append(f"{api.get('name','')} | {api.get('base_url','')} | {api.get('api_key','')} | {api.get('model','')}")
-        self.extra_apis_edit.setPlainText("\n".join(_lines))
-        extra_v.addWidget(self.extra_apis_edit)
+        self.btn_add_custom.clicked.connect(lambda: self._add_custom_api_row())
+        extra_v.addWidget(self.btn_add_custom)
         layout.addWidget(self.extra_group)
+
+        # Load any saved extra endpoints as rows.
+        for api in self.config.get("custom_apis", []):
+            self._add_custom_api_row(api)
 
         # Free-models filter applies to all providers, so it lives outside the groups.
         self.free_only_chk = QCheckBox("🆓 Show FREE models only (Gemini flash/gemma + OpenRouter :free)")
@@ -649,6 +654,41 @@ class SettingsDialog(QDialog):
         self.status_label.setStyleSheet(f"color: {ACCENT_CYAN};")
         if self.openai_key.text().strip():
             self.fetch_timer.start()
+
+    def _add_custom_api_row(self, data=None):
+        """Append a fresh Base URL / API Key / Model ID block for one custom endpoint."""
+        data = data or {}
+        row = QFrame()
+        row.setStyleSheet(f"QFrame {{ border: 1px solid {BORDER_COLOR}; border-radius: 8px; background: rgba(255,255,255,0.02); }}")
+        rl = QFormLayout(row)
+        rl.setContentsMargins(10, 8, 10, 8)
+        url = QLineEdit(data.get("base_url", ""))
+        url.setPlaceholderText("https://your-endpoint/v1")
+        key = QLineEdit(data.get("api_key", ""))
+        key.setEchoMode(QLineEdit.EchoMode.Password)
+        key.setPlaceholderText("API key (or leave blank for local)")
+        model = QLineEdit(data.get("model", ""))
+        model.setPlaceholderText("model id, e.g. llama3.1:8b")
+        rl.addRow("Base URL:", url)
+        rl.addRow("API Key:", key)
+        rl.addRow("Model ID:", model)
+
+        rm = QPushButton("✕ Remove")
+        rm.setStyleSheet(f"background:#261616; color:{ACCENT_RED}; border:1px solid #4d2222; border-radius:6px; font-size:10px; padding:3px 8px;")
+        entry = {"frame": row, "url": url, "key": key, "model": model}
+        rm.clicked.connect(lambda _=False, e=entry: self._remove_custom_api_row(e))
+        rl.addRow("", rm)
+
+        self._custom_rows.append(entry)
+        self._extra_rows_layout.addWidget(row)
+
+    def _remove_custom_api_row(self, entry):
+        try:
+            self._custom_rows.remove(entry)
+        except ValueError:
+            pass
+        entry["frame"].setParent(None)
+        entry["frame"].deleteLater()
 
     def _on_provider_changed(self, provider: str):
         # Both providers can be configured at the same time — show BOTH groups so the
@@ -762,12 +802,14 @@ class SettingsDialog(QDialog):
         self.config["custom_base_url"] = self.custom_url.text().strip()
         self.config["custom_api_key"] = self.custom_key.text().strip()
         self.config["custom_model"] = self.custom_model.text().strip()
-        # Parse the unlimited extra custom endpoints.
+        # Collect the unlimited extra custom endpoints from their ＋-added rows.
         extras = []
-        for line in self.extra_apis_edit.toPlainText().splitlines():
-            parts = [p.strip() for p in line.split("|")]
-            if len(parts) >= 4 and parts[1] and parts[3]:
-                extras.append({"name": parts[0], "base_url": parts[1], "api_key": parts[2], "model": parts[3]})
+        for e in self._custom_rows:
+            url = e["url"].text().strip()
+            key = e["key"].text().strip()
+            model = e["model"].text().strip()
+            if url and model:
+                extras.append({"name": model, "base_url": url, "api_key": key, "model": model})
         self.config["custom_apis"] = extras
         self.config["operator_mode"] = self.operator_chk.isChecked()
         self.config["free_models_only"] = self.free_only_chk.isChecked()
