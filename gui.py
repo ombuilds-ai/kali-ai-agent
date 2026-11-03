@@ -1454,6 +1454,7 @@ class MainWindow(QMainWindow):
         self._normal_turn_limit = 25   # autonomous cap outside vision mode
         self._model_provider = {}      # model_id -> provider (for dropdown routing)
         self._custom_creds = {}        # model_id -> (key, url, model) for extra custom endpoints
+        self._first_selectable_idx = None
         self.cmd_worker = None
         
         config = load_config()
@@ -1857,7 +1858,7 @@ class MainWindow(QMainWindow):
                 min-width: 340px;
             }}
         """)
-        self.model_selector.currentTextChanged.connect(self._on_dashboard_model_changed)
+        self.model_selector.currentIndexChanged.connect(self._on_dashboard_model_changed)
         
         self.btn_send = QPushButton("▶")
         self.btn_send.setFixedSize(32, 32)
@@ -2181,38 +2182,80 @@ class MainWindow(QMainWindow):
         self.model_selector.blockSignals(False)
 
     def _on_dashboard_models_map_ready(self, by_provider: dict):
-        """Populate the model dropdown from all providers, remembering each model's provider."""
+        """Populate the model dropdown GROUPED by provider, so it's clear which API each
+        model belongs to. Group headers are non-selectable; real model id is stored as itemData."""
         self._model_provider = {}
         self._custom_creds = {}  # model_id -> (key, url, model) for extra custom endpoints
-        items = []
-        for prov in ("gemini", "openai", "custom"):
-            for m in by_provider.get(prov, []):
-                self._model_provider[m] = prov   # last wins on rare id collisions
-                items.append(m)
+        cfg = load_config()
+
+        gem = list(by_provider.get("gemini", []))
+        oai = list(by_provider.get("openai", []))
+        cus = list(by_provider.get("custom", []))
+        for m in gem:
+            self._model_provider[m] = "gemini"
+        for m in oai:
+            self._model_provider[m] = "openai"
+        for m in cus:
+            self._model_provider[m] = "custom"
         # Unlimited extra custom endpoints from config.
-        for api in load_config().get("custom_apis", []):
+        extras = []
+        for api in cfg.get("custom_apis", []):
             mid = (api.get("model") or "").strip()
             if mid:
                 self._model_provider[mid] = "custom"
                 self._custom_creds[mid] = (api.get("api_key", ""), api.get("base_url", ""), mid)
-                items.append(mid)
-        items = sorted(set(items))
-        if not items:
-            return
-        config = load_config()
-        provider = config.get("provider", "gemini")
-        cur_model = config.get(f"{provider}_model", "")
+                extras.append(mid)
+
         self.model_selector.blockSignals(True)
         self.model_selector.clear()
-        self.model_selector.addItems(items)
-        if cur_model in items:
-            self.model_selector.setCurrentText(cur_model)
-        else:
-            self.model_selector.setCurrentIndex(0)
+        self._first_selectable_idx = None
+
+        def add_group(label, models, icon):
+            models = sorted(set(m for m in models if m))
+            if not models:
+                return
+            self.model_selector.addItem(f"────  {label}  ────")
+            hidx = self.model_selector.count() - 1
+            try:
+                self.model_selector.model().item(hidx).setEnabled(False)  # non-selectable header
+            except Exception:
+                pass
+            for m in models:
+                self.model_selector.addItem(f"{icon}  {m}")
+                i = self.model_selector.count() - 1
+                self.model_selector.setItemData(i, m)  # raw model id
+                if self._first_selectable_idx is None:
+                    self._first_selectable_idx = i
+
+        add_group("Google Gemini", gem, "🔷")
+        add_group("OpenRouter / OpenAI", oai, "🟣")
+        add_group("Custom APIs", cus + extras, "🟢")
+
+        if self._first_selectable_idx is None:
+            self.model_selector.blockSignals(False)
+            return
+
+        provider = cfg.get("provider", "gemini")
+        cur = cfg.get("custom_model", "") if provider == "custom" else cfg.get(f"{provider}_model", "")
+        self._select_model_in_selector(cur)
         self.model_selector.blockSignals(False)
 
-    def _on_dashboard_model_changed(self, new_model: str):
-        if not new_model or not self.engine:
+    def _select_model_in_selector(self, model_id: str):
+        """Set the dropdown to the item whose stored id matches model_id (or first selectable)."""
+        if model_id:
+            for i in range(self.model_selector.count()):
+                if self.model_selector.itemData(i) == model_id:
+                    self.model_selector.setCurrentIndex(i)
+                    return
+        if getattr(self, "_first_selectable_idx", None) is not None:
+            self.model_selector.setCurrentIndex(self._first_selectable_idx)
+
+    def _on_dashboard_model_changed(self, *_args):
+        if not self.engine:
+            return
+        # The real model id is stored as itemData (display text is prefixed/grouped).
+        new_model = self.model_selector.currentData()
+        if not new_model:  # a group header or empty selection
             return
         # If this model belongs to an extra custom endpoint, point the engine at it.
         creds = getattr(self, "_custom_creds", {}).get(new_model)
@@ -2251,9 +2294,7 @@ class MainWindow(QMainWindow):
             self._add_bubble("system", f"⚠️ Could not switch model: {msg}")
             return
         self.model_selector.blockSignals(True)
-        if self.model_selector.findText(model_id) == -1:
-            self.model_selector.addItem(model_id)
-        self.model_selector.setCurrentText(model_id)
+        self._select_model_in_selector(model_id)
         self.model_selector.blockSignals(False)
         config = load_config()
         config["provider"] = self.engine.provider
