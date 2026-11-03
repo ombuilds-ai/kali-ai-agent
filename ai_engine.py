@@ -543,6 +543,7 @@ class AIEngine:
         self.screenshot_detail = "low"  # bumped to "high" during Live Screen Control
         self.free_models_only = False   # list only free models when True (both providers)
         self.effort = "balanced"        # fast | balanced | deep
+        self._json_mode = True          # force valid-JSON output when the endpoint supports it
 
     def _init_openai(self):
         if self.openai_key:
@@ -909,13 +910,22 @@ class AIEngine:
         max_toks, temp = _effort_params(self.effort)
         if _is_small_model(self._current_model_id()):
             temp = min(temp, 0.35)  # small models follow the JSON format better at low temperature
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=max_toks,
-            temperature=temp,
-            timeout=60.0,
-        )
+
+        create_kwargs = dict(model=model, messages=messages, max_tokens=max_toks,
+                             temperature=temp, timeout=60.0)
+        # Constrained JSON output (OpenAI/OpenRouter/Ollama "JSON mode") guarantees the
+        # model returns a valid JSON object — the biggest reliability win for small models.
+        if self._json_mode:
+            create_kwargs["response_format"] = {"type": "json_object"}
+        try:
+            response = client.chat.completions.create(**create_kwargs)
+        except Exception:
+            if self._json_mode:  # endpoint likely doesn't support response_format → retry without
+                self._json_mode = False
+                create_kwargs.pop("response_format", None)
+                response = client.chat.completions.create(**create_kwargs)
+            else:
+                raise
 
         if isinstance(response, str):
             raw_reply = response
@@ -1004,15 +1014,28 @@ class AIEngine:
         max_toks, temp = _effort_params(self.effort)
         if _is_small_model(self._current_model_id()):
             temp = min(temp, 0.35)  # small models follow the JSON format better at low temperature
+
+        gen_cfg = {"temperature": temp, "max_output_tokens": max_toks}
+        if self._json_mode:
+            gen_cfg["response_mime_type"] = "application/json"  # force valid JSON from Gemini
         try:
             response = self.gemini_model_obj.generate_content(
-                contents,
-                generation_config={"temperature": temp, "max_output_tokens": max_toks},
-                request_options={"timeout": 60.0},
+                contents, generation_config=gen_cfg, request_options={"timeout": 60.0},
             )
             raw_reply = response.text
         except Exception as e:
-            raise RuntimeError(f"Gemini API error: {str(e)}")
+            if self._json_mode:  # model may not support JSON mime → retry plain
+                self._json_mode = False
+                gen_cfg.pop("response_mime_type", None)
+                try:
+                    response = self.gemini_model_obj.generate_content(
+                        contents, generation_config=gen_cfg, request_options={"timeout": 60.0},
+                    )
+                    raw_reply = response.text
+                except Exception as e2:
+                    raise RuntimeError(f"Gemini API error: {str(e2)}")
+            else:
+                raise RuntimeError(f"Gemini API error: {str(e)}")
 
         user_text_only = "\n".join(text_record) if text_record else "[image/screenshot turn]"
         self.history.append({"role": "user", "content": user_text_only})
