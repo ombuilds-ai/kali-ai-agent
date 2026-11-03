@@ -51,7 +51,7 @@ def main():
         pass
 
     window = MainWindow()
-    window.show()
+    window.showMaximized()   # open fit-to-screen so the UI never overflows the display
     sys.exit(app.exec())
 
 

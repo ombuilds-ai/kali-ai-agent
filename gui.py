@@ -1487,15 +1487,14 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Kali-AI Agent by Om | Advanced Security Controller v3.0")
-        # Size to fit the actual screen and NEVER grow beyond it — content scrolls inside.
+        # Keep a small minimum so the window can shrink to fit small screens/VMs; the actual
+        # window is opened maximized (see main.py) so it always fits the screen exactly.
+        self.setMinimumSize(720, 440)
         try:
             _avail = QApplication.primaryScreen().availableGeometry()
-            _w = min(1320, _avail.width())
-            _h = min(820, _avail.height())
-            self.resize(_w, _h)
-            self.setMaximumSize(_avail.width(), _avail.height())
+            self.resize(min(1320, _avail.width()), min(820, _avail.height()))
         except Exception:
-            self.resize(1100, 700)
+            self.resize(1100, 680)
         self.setStyleSheet(STYLE)
         
         self.engine: Optional[AIEngine] = None
@@ -1902,7 +1901,7 @@ class MainWindow(QMainWindow):
         
         self.model_selector = QComboBox()
         self.model_selector.setToolTip("Select Active AI Model")
-        self.model_selector.setMinimumWidth(210)
+        self.model_selector.setMinimumWidth(120)
         self.model_selector.setMaxVisibleItems(15)
         self.model_selector.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.model_selector.view().setMinimumWidth(340)
@@ -2023,6 +2022,11 @@ class MainWindow(QMainWindow):
 
         self.main_splitter.addWidget(self.terminal_panel)
         self.main_splitter.setSizes([760, 420])
+        # Allow panes to collapse/shrink so the window fits narrow screens.
+        self.main_splitter.setCollapsible(0, False)
+        self.main_splitter.setCollapsible(1, True)
+        chat_container.setMinimumWidth(360)
+        self.terminal_panel.setMinimumWidth(0)
         
         main_layout.addWidget(self.main_splitter)
 
@@ -3192,5 +3196,5 @@ class MainWindow(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
-    window.show()
+    window.showMaximized()
     sys.exit(app.exec())
