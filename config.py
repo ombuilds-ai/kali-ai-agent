@@ -19,6 +19,7 @@ DEFAULT_CONFIG = {
     "custom_api_key": "",
     "custom_base_url": "",
     "custom_model": "",
+    "custom_apis": [],   # unlimited extra endpoints: [{"name","base_url","api_key","model"}]
     "font_size": 13,
     "operator_mode": True,       # never refuse authorized security tasks
     "free_models_only": False,   # OpenRouter: show only free models

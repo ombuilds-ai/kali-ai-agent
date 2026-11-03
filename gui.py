@@ -133,34 +133,63 @@ def _format_message_html(text: str, font_size: Optional[int] = None) -> str:
     code_size = max(10, font_size - 1)
     
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    
-    def code_block_replacer(match):
-        lang = match.group(1) or "bash"
-        code = match.group(2).strip()
-        return f'''
-        <div style="background-color: #0b0d18; border: 1px solid #262a40; border-radius: 10px; margin: 8px 0; overflow: hidden;">
-            <div style="background-color: #141627; padding: 5px 11px; font-family: Consolas, monospace; font-size: {code_size - 1}px; color: #9aa0c4; border-bottom: 1px solid #262a40;">
-                &#9889; {lang}
-            </div>
-            <pre style="padding: 11px; margin: 0; font-family: Consolas, monospace; font-size: {code_size}px; color: #d8dbf0; line-height: 1.45;"><code>{code}</code></pre>
-        </div>
-        '''
-    text = re.sub(r'```([\w\+\-\.]*)?\n(.*?)```', code_block_replacer, text, flags=re.DOTALL)
-    text = re.sub(r'`(.*?)`', f'<code style="background-color: #1a1c2e; padding: 2px 6px; border-radius: 5px; font-family: Consolas, monospace; color: #a78bfa; font-size: {code_size}px;">\\1</code>', text)
-    text = re.sub(r'\*\*(.*?)\*\*', r'<strong style="color: #ffffff;">\1</strong>', text)
-    text = re.sub(r'\[IMG:(.*?)\]', r'<br><img src="file:///\1" style="max-width: 380px; border-radius: 10px; margin: 6px 0;"><br>', text)
-    
-    parts = text.split('<div style="background-color: #0b0d18;')
-    for i in range(len(parts)):
-        if i == 0:
-            parts[i] = parts[i].replace('\n', '<br>')
+
+    # 1. Extract fenced code blocks into placeholders so markdown/line handling can't touch them.
+    blocks = []
+
+    def _code_block(match):
+        lang = (match.group(1) or "bash").strip() or "bash"
+        code = match.group(2).rstrip("\n")
+        html = (
+            f'<div style="background-color:#0b0d18; border:1px solid #262a40; border-radius:10px; margin:8px 0;">'
+            f'<div style="background-color:#141627; padding:5px 11px; font-family:Consolas,monospace; '
+            f'font-size:{code_size - 1}px; color:#9aa0c4; border-bottom:1px solid #262a40;">&#9889; {lang}</div>'
+            f'<pre style="padding:11px; margin:0; font-family:Consolas,monospace; font-size:{code_size}px; '
+            f'color:#d8dbf0; line-height:1.45; white-space:pre-wrap;">{code}</pre></div>'
+        )
+        blocks.append(html)
+        return f"\x00CB{len(blocks) - 1}\x00"
+
+    text = re.sub(r'```([\w\+\-\.]*)?\n(.*?)```', _code_block, text, flags=re.DOTALL)
+
+    # 2. Inline markdown (operates on the remaining non-code text).
+    text = re.sub(
+        r'`([^`]+)`',
+        f'<code style="background-color:#1a1c2e; padding:2px 6px; border-radius:5px; '
+        f'font-family:Consolas,monospace; color:#a78bfa; font-size:{code_size}px;">\\1</code>',
+        text,
+    )
+    text = re.sub(r'\[([^\]]+)\]\((https?://[^\s)]+)\)', r'<a href="\2" style="color:#60a5fa; text-decoration:none;">\1</a>', text)
+    text = re.sub(r'\*\*(.*?)\*\*', r'<strong style="color:#ffffff;">\1</strong>', text)
+    text = re.sub(r'\[IMG:(.*?)\]', r'<br><img src="file:///\1" style="max-width:380px; border-radius:10px; margin:6px 0;"><br>', text)
+
+    # 3. Block-level markdown line by line (headings, lists, rules), ChatGPT-style.
+    out = []
+    for line in text.split("\n"):
+        s = line.strip()
+        if s.startswith("\x00CB") and s.endswith("\x00"):
+            out.append(s)
+        elif re.match(r'^###\s+', s):
+            out.append(f'<div style="font-size:{font_size + 1}px; font-weight:700; color:#fff; margin:9px 0 2px;">' + re.sub(r'^###\s+', '', s) + '</div>')
+        elif re.match(r'^##\s+', s):
+            out.append(f'<div style="font-size:{font_size + 3}px; font-weight:800; color:#fff; margin:11px 0 3px;">' + re.sub(r'^##\s+', '', s) + '</div>')
+        elif re.match(r'^#\s+', s):
+            out.append(f'<div style="font-size:{font_size + 5}px; font-weight:800; color:#fff; margin:12px 0 4px;">' + re.sub(r'^#\s+', '', s) + '</div>')
+        elif s in ("---", "***", "___"):
+            out.append('<hr style="border:none; border-top:1px solid #2a2d45; margin:9px 0;">')
+        elif re.match(r'^[-*+]\s+', s):
+            out.append('<div style="margin:2px 0 2px 10px;">&#8226;&nbsp; ' + re.sub(r'^[-*+]\s+', '', s) + '</div>')
+        elif re.match(r'^\d+\.\s+', s):
+            out.append('<div style="margin:2px 0 2px 10px;">' + s + '</div>')
+        elif s == "":
+            out.append('<div style="height:7px;"></div>')
         else:
-            subparts = parts[i].split('</div>', 1)
-            if len(subparts) == 2:
-                subparts[1] = subparts[1].replace('\n', '<br>')
-                parts[i] = '</div>'.join(subparts)
-    text = '<div style="background-color: #070a10;'.join(parts)
-    return f'<div style="font-size: {font_size}px; line-height: 1.5; color: #f8fafc;">{text}</div>'
+            out.append('<div style="margin:1px 0;">' + line + '</div>')
+    html = "".join(out)
+
+    # 4. Restore code blocks.
+    html = re.sub(r'\x00CB(\d+)\x00', lambda m: blocks[int(m.group(1))], html)
+    return f'<div style="font-size:{font_size}px; line-height:1.55; color:#eceefb;">{html}</div>'
 
 
 # ── Background Workers ──────────────────────────────────────────────────────────
@@ -534,6 +563,28 @@ class SettingsDialog(QDialog):
         custom_layout.addRow("Model ID:", self.custom_model)
         layout.addWidget(self.custom_group)
 
+        # Unlimited EXTRA custom endpoints — one per line: label | base_url | api_key | model
+        self.extra_group = QGroupBox("More Custom APIs (unlimited — one per line:  label | base_url | api_key | model)")
+        self.extra_group.setStyleSheet(self.custom_group.styleSheet())
+        extra_v = QVBoxLayout(self.extra_group)
+        extra_v.setContentsMargins(10, 14, 10, 10)
+        self.extra_apis_edit = QPlainTextEdit()
+        self.extra_apis_edit.setPlaceholderText(
+            "my-local | http://localhost:11434/v1 | ollama | llama3.1:8b\n"
+            "work-gpt | https://gw.example/v1 | sk-xxxx | gpt-4o-mini"
+        )
+        self.extra_apis_edit.setFixedHeight(90)
+        self.extra_apis_edit.setStyleSheet(
+            f"QPlainTextEdit {{ background:#0c0e1a; border:1px solid {BORDER_COLOR}; border-radius:8px; "
+            f"padding:6px; font-family:Consolas,monospace; font-size:11px; color:#9fd0b0; }}"
+        )
+        _lines = []
+        for api in self.config.get("custom_apis", []):
+            _lines.append(f"{api.get('name','')} | {api.get('base_url','')} | {api.get('api_key','')} | {api.get('model','')}")
+        self.extra_apis_edit.setPlainText("\n".join(_lines))
+        extra_v.addWidget(self.extra_apis_edit)
+        layout.addWidget(self.extra_group)
+
         # Free-models filter applies to all providers, so it lives outside the groups.
         self.free_only_chk = QCheckBox("🆓 Show FREE models only (Gemini flash/gemma + OpenRouter :free)")
         self.free_only_chk.setChecked(bool(self.config.get("free_models_only", False)))
@@ -606,6 +657,7 @@ class SettingsDialog(QDialog):
         self.openai_group.setVisible(True)
         self.gemini_group.setVisible(True)
         self.custom_group.setVisible(True)
+        self.extra_group.setVisible(True)
         
     def _auto_fetch_models(self):
         provider = self.provider_combo.currentText()
@@ -710,6 +762,13 @@ class SettingsDialog(QDialog):
         self.config["custom_base_url"] = self.custom_url.text().strip()
         self.config["custom_api_key"] = self.custom_key.text().strip()
         self.config["custom_model"] = self.custom_model.text().strip()
+        # Parse the unlimited extra custom endpoints.
+        extras = []
+        for line in self.extra_apis_edit.toPlainText().splitlines():
+            parts = [p.strip() for p in line.split("|")]
+            if len(parts) >= 4 and parts[1] and parts[3]:
+                extras.append({"name": parts[0], "base_url": parts[1], "api_key": parts[2], "model": parts[3]})
+        self.config["custom_apis"] = extras
         self.config["operator_mode"] = self.operator_chk.isChecked()
         self.config["free_models_only"] = self.free_only_chk.isChecked()
         save_config(self.config)
@@ -1394,6 +1453,7 @@ class MainWindow(QMainWindow):
         self._vision_control = False   # Live Screen Control: watch screen + auto GUI control
         self._normal_turn_limit = 25   # autonomous cap outside vision mode
         self._model_provider = {}      # model_id -> provider (for dropdown routing)
+        self._custom_creds = {}        # model_id -> (key, url, model) for extra custom endpoints
         self.cmd_worker = None
         
         config = load_config()
@@ -2123,11 +2183,19 @@ class MainWindow(QMainWindow):
     def _on_dashboard_models_map_ready(self, by_provider: dict):
         """Populate the model dropdown from all providers, remembering each model's provider."""
         self._model_provider = {}
+        self._custom_creds = {}  # model_id -> (key, url, model) for extra custom endpoints
         items = []
         for prov in ("gemini", "openai", "custom"):
             for m in by_provider.get(prov, []):
                 self._model_provider[m] = prov   # last wins on rare id collisions
                 items.append(m)
+        # Unlimited extra custom endpoints from config.
+        for api in load_config().get("custom_apis", []):
+            mid = (api.get("model") or "").strip()
+            if mid:
+                self._model_provider[mid] = "custom"
+                self._custom_creds[mid] = (api.get("api_key", ""), api.get("base_url", ""), mid)
+                items.append(mid)
         items = sorted(set(items))
         if not items:
             return
@@ -2146,10 +2214,14 @@ class MainWindow(QMainWindow):
     def _on_dashboard_model_changed(self, new_model: str):
         if not new_model or not self.engine:
             return
-        # Switch to the chosen model; use the remembered provider (custom vs OpenRouter can't
-        # be told apart by id alone). Shared transcript is preserved.
-        prov = getattr(self, "_model_provider", {}).get(new_model)
-        ok, msg = self.engine.set_active_model(new_model, prov)
+        # If this model belongs to an extra custom endpoint, point the engine at it.
+        creds = getattr(self, "_custom_creds", {}).get(new_model)
+        if creds:
+            ok, msg = self.engine.set_custom_endpoint(*creds)
+        else:
+            # Use the remembered provider (custom vs OpenRouter can't be told apart by id alone).
+            prov = getattr(self, "_model_provider", {}).get(new_model)
+            ok, msg = self.engine.set_active_model(new_model, prov)
         if not ok:
             self._add_bubble("system", f"⚠️ {msg}")
             return
@@ -2169,8 +2241,12 @@ class MainWindow(QMainWindow):
         """Handle an AI-requested model switch (switch_model field)."""
         if not self.engine or not model_id:
             return
-        prov = getattr(self, "_model_provider", {}).get(model_id)
-        ok, msg = self.engine.set_active_model(model_id, prov)
+        creds = getattr(self, "_custom_creds", {}).get(model_id)
+        if creds:
+            ok, msg = self.engine.set_custom_endpoint(*creds)
+        else:
+            prov = getattr(self, "_model_provider", {}).get(model_id)
+            ok, msg = self.engine.set_active_model(model_id, prov)
         if not ok:
             self._add_bubble("system", f"⚠️ Could not switch model: {msg}")
             return
