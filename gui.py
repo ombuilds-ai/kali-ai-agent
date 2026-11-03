@@ -26,62 +26,49 @@ from ghidra import get_ghidra
 import tools
 import memory
 
-# ── Sleek Modern Palette ────────────────────────────────────────────────────────
-# ── Cyber-Glass Palette (v3.0) ──────────────────────────────────────────────────
-BG_DARK = "#0a0b14"       # Main canvas (deep space)
-BG_SIDEBAR = "#0d0e1a"    # Left navigation rail
-BG_TERMINAL = "#06070f"   # Terminal output panel
-BG_CARD = "#151724"       # Assistant glass cards
-BG_USER = "#1c1740"       # User message bubbles (violet tint)
-BG_INPUT = "#111322"      # Floating input bar
-BORDER_COLOR = "#23263a"  # Subtle borders
-ACCENT_BLUE = "#7c5cff"   # Primary accent (electric violet) — name kept for compat
-ACCENT_CYAN = "#22d3ee"   # Secondary accent (cyan)
-ACCENT_GREEN = "#2dd4bf"  # Success (teal)
-ACCENT_RED = "#fb5a6a"    # Danger
-ACCENT_AMBER = "#f5b14c"  # Warning
-TEXT_PRIMARY = "#eceefb"  # Primary text
-TEXT_MUTED = "#8b8fae"    # Muted text
+# ── Clean Dark Theme (v3.1 — flat, ChatGPT-like, GPU-light for smoothness) ───────
+BG_DARK = "#1a1b1e"       # Main canvas
+BG_SIDEBAR = "#161719"    # Left navigation rail
+BG_TERMINAL = "#0f1012"   # Terminal output panel
+BG_CARD = "#232428"       # Assistant message hover / cards
+BG_USER = "#2a2b30"       # User message background
+BG_INPUT = "#232428"      # Input bar
+BORDER_COLOR = "#34353a"  # Subtle borders
+ACCENT_BLUE = "#10a37f"   # Primary accent (teal-green) — name kept for compat
+ACCENT_CYAN = "#3b82f6"   # Secondary (blue)
+ACCENT_GREEN = "#10a37f"  # Success
+ACCENT_RED = "#ef5350"    # Danger
+ACCENT_AMBER = "#e0a33e"  # Warning
+TEXT_PRIMARY = "#ececf1"  # Primary text
+TEXT_MUTED = "#9a9ba3"    # Muted text
 
 STYLE = f"""
-QMainWindow {{
-    background-color: {BG_DARK};
-    color: {TEXT_PRIMARY};
-    font-family: 'Inter', 'Segoe UI', sans-serif;
-}}
-QWidget {{
-    font-family: 'Inter', 'Segoe UI', sans-serif;
-    font-size: 13px;
-    color: {TEXT_PRIMARY};
-}}
+QMainWindow {{ background-color: {BG_DARK}; color: {TEXT_PRIMARY}; font-family: 'Inter', 'Segoe UI', sans-serif; }}
+QWidget {{ font-family: 'Inter', 'Segoe UI', sans-serif; font-size: 13px; color: {TEXT_PRIMARY}; }}
 QScrollArea {{ border: none; background: transparent; }}
 QScrollArea > QWidget > QWidget {{ background: transparent; }}
-QScrollBar:vertical {{ background: transparent; width: 9px; margin: 2px; }}
-QScrollBar::handle:vertical {{ background: #2a2d45; min-height: 28px; border-radius: 4px; }}
-QScrollBar::handle:vertical:hover {{ background: {ACCENT_BLUE}; }}
-QScrollBar:horizontal {{ background: transparent; height: 9px; margin: 2px; }}
-QScrollBar::handle:horizontal {{ background: #2a2d45; min-width: 28px; border-radius: 4px; }}
-QScrollBar::handle:horizontal:hover {{ background: {ACCENT_BLUE}; }}
+QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
+QScrollBar::handle:vertical {{ background: #44454b; min-height: 30px; border-radius: 5px; }}
+QScrollBar::handle:vertical:hover {{ background: #5a5b61; }}
+QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 2px; }}
+QScrollBar::handle:horizontal {{ background: #44454b; min-width: 30px; border-radius: 5px; }}
+QScrollBar::handle:horizontal:hover {{ background: #5a5b61; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0px; width: 0px; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 QPushButton {{
-    border-radius: 9px;
-    padding: 7px 13px;
+    border-radius: 8px;
+    padding: 7px 12px;
     font-weight: 600;
-    background-color: rgba(255, 255, 255, 0.04);
+    background-color: #24252a;
     border: 1px solid {BORDER_COLOR};
-    color: #d8dbf0;
+    color: #d7d8de;
 }}
-QPushButton:hover {{
-    background-color: rgba(124, 92, 255, 0.14);
-    border-color: {ACCENT_BLUE};
-    color: {TEXT_PRIMARY};
-}}
-QPushButton:pressed {{ background-color: rgba(124, 92, 255, 0.08); }}
+QPushButton:hover {{ background-color: #2e2f35; border-color: #4a4b52; color: {TEXT_PRIMARY}; }}
+QPushButton:pressed {{ background-color: #1f2024; }}
 QLineEdit, QComboBox {{
-    background-color: #0c0e1a;
+    background-color: #1f2024;
     border: 1px solid {BORDER_COLOR};
-    border-radius: 9px;
+    border-radius: 8px;
     padding: 7px 11px;
     color: {TEXT_PRIMARY};
     selection-background-color: {ACCENT_BLUE};
@@ -89,40 +76,26 @@ QLineEdit, QComboBox {{
 QLineEdit:focus, QComboBox:focus {{ border: 1px solid {ACCENT_BLUE}; }}
 QComboBox::drop-down {{ border: none; width: 22px; }}
 QComboBox QAbstractItemView {{
-    background: #12131f;
-    color: {TEXT_PRIMARY};
-    selection-background-color: rgba(124, 92, 255, 0.25);
-    border: 1px solid {BORDER_COLOR};
-    border-radius: 8px;
-    padding: 4px;
-    outline: none;
+    background: #1f2024; color: {TEXT_PRIMARY};
+    selection-background-color: #2e2f35;
+    border: 1px solid {BORDER_COLOR}; border-radius: 8px; padding: 4px; outline: none;
 }}
 QCheckBox {{ color: {TEXT_MUTED}; font-size: 11px; spacing: 7px; }}
-QCheckBox::indicator {{
-    width: 15px; height: 15px; border-radius: 5px;
-    border: 1px solid {BORDER_COLOR}; background: #0c0e1a;
-}}
+QCheckBox::indicator {{ width: 15px; height: 15px; border-radius: 5px; border: 1px solid {BORDER_COLOR}; background: #1f2024; }}
 QCheckBox::indicator:checked {{ background: {ACCENT_BLUE}; border-color: {ACCENT_BLUE}; }}
-QToolTip {{
-    background-color: #12131f; color: {TEXT_PRIMARY};
-    border: 1px solid {ACCENT_BLUE}; border-radius: 6px; padding: 5px 8px;
-}}
-QSplitter::handle {{ background-color: {BG_DARK}; width: 3px; }}
+QToolTip {{ background-color: #24252a; color: {TEXT_PRIMARY}; border: 1px solid {BORDER_COLOR}; border-radius: 6px; padding: 5px 8px; }}
+QSplitter::handle {{ background-color: {BG_DARK}; width: 2px; }}
 QSplitter::handle:hover {{ background-color: {ACCENT_BLUE}; }}
-QMenu {{
-    background-color: #12131f; color: {TEXT_PRIMARY};
-    border: 1px solid {BORDER_COLOR}; border-radius: 8px; padding: 5px;
-}}
+QMenu {{ background-color: #24252a; color: {TEXT_PRIMARY}; border: 1px solid {BORDER_COLOR}; border-radius: 8px; padding: 5px; }}
 QMenu::item {{ padding: 6px 18px; border-radius: 5px; }}
-QMenu::item:selected {{ background-color: rgba(124, 92, 255, 0.25); }}
+QMenu::item:selected {{ background-color: #2e2f35; }}
 """
 
+
 def apply_shadow(widget: QWidget, blur=16, offset_y=4, alpha=120):
-    shadow = QGraphicsDropShadowEffect(widget)
-    shadow.setBlurRadius(blur)
-    shadow.setColor(QColor(0, 0, 0, alpha))
-    shadow.setOffset(0, offset_y)
-    widget.setGraphicsEffect(shadow)
+    # Drop shadows (QGraphicsDropShadowEffect) are a major repaint cost and were a big
+    # source of the laggy feel — intentionally disabled in favour of flat design.
+    return
 
 
 CURRENT_FONT_SIZE = 13
@@ -991,50 +964,38 @@ class ChatBubble(QFrame):
         role_label = QLabel()
         role_label.setFont(QFont("Inter", 10, QFont.Weight.Bold))
         
+        # Flat, ChatGPT/Claude-style messages — no bordered boxes. Assistant & system are
+        # transparent full-width; the user message gets a subtle flat background.
+        bubble_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         if role == "user":
-            role_label.setText("👤 You")
-            role_label.setStyleSheet(f"color: {ACCENT_CYAN}; font-weight: bold;")
-            bubble_box.setStyleSheet(
-                "QFrame { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, "
-                "stop:0 #221a4d, stop:1 #171232); border: 1px solid #332a66; border-radius: 14px; }"
-            )
-            bubble_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-            main_h_layout.addStretch(1)
-            main_h_layout.addWidget(bubble_box, 3)
+            role_label.setText("👤  You")
+            role_label.setStyleSheet(f"color: {ACCENT_CYAN}; font-weight: 700; font-size: 11px;")
+            bubble_box.setStyleSheet(f"QFrame {{ background-color: {BG_USER}; border: none; border-radius: 10px; }}")
         elif role == "assistant":
-            role_label.setText("🐉 Kali-AI Agent")
-            role_label.setStyleSheet(f"color: {ACCENT_GREEN}; font-weight: bold;")
-            bubble_box.setStyleSheet(
-                f"QFrame {{ background-color: {BG_CARD}; border: 1px solid {BORDER_COLOR}; "
-                f"border-left: 2px solid {ACCENT_BLUE}; border-radius: 12px; }}"
-            )
-            bubble_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-            main_h_layout.addWidget(bubble_box, 1)
-        else: # system
-            role_label.setText("⚡ Execution Notice")
-            role_label.setStyleSheet(f"color: {ACCENT_AMBER}; font-weight: bold;")
-            bubble_box.setStyleSheet(
-                f"QFrame {{ background-color: rgba(245, 177, 76, 0.06); border: 1px solid rgba(245, 177, 76, 0.25); "
-                f"border-left: 2px solid {ACCENT_AMBER}; border-radius: 10px; }}"
-            )
-            bubble_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-            main_h_layout.addWidget(bubble_box, 1)
+            role_label.setText("🐉  Kali-AI")
+            role_label.setStyleSheet(f"color: {ACCENT_GREEN}; font-weight: 700; font-size: 11px;")
+            bubble_box.setStyleSheet("QFrame { background: transparent; border: none; }")
+        else:  # system
+            role_label.setText("⚡  Notice")
+            role_label.setStyleSheet(f"color: {ACCENT_AMBER}; font-weight: 700; font-size: 11px;")
+            bubble_box.setStyleSheet("QFrame { background: transparent; border: none; }")
+        main_h_layout.addWidget(bubble_box, 1)
             
         header_layout.addWidget(role_label)
         
         if role == "assistant" and confidence_score is not None:
             conf_badge = QLabel(f"🎯 {confidence_score}%")
             conf_badge.setStyleSheet(
-                f"background: rgba(124, 92, 255, 0.14); border: 1px solid rgba(124, 92, 255, 0.4); "
-                f"color: #b7a6ff; border-radius: 9px; padding: 2px 8px; font-size: 10px; font-weight: 700;"
+                f"background: #24252a; border: 1px solid {BORDER_COLOR}; color: {ACCENT_GREEN}; "
+                f"border-radius: 7px; padding: 1px 7px; font-size: 10px; font-weight: 700;"
             )
             header_layout.addWidget(conf_badge)
             
             risk_color = ACCENT_GREEN if impact_risk == "Low" else (ACCENT_AMBER if impact_risk == "Medium" else ACCENT_RED)
             risk_badge = QLabel(f"🛡️ {impact_risk or 'Low'}")
             risk_badge.setStyleSheet(
-                f"background: rgba(255, 255, 255, 0.04); border: 1px solid {risk_color}; "
-                f"color: {risk_color}; border-radius: 9px; padding: 2px 8px; font-size: 10px; font-weight: 700;"
+                f"background: #24252a; border: 1px solid {risk_color}; "
+                f"color: {risk_color}; border-radius: 7px; padding: 1px 7px; font-size: 10px; font-weight: 700;"
             )
             header_layout.addWidget(risk_badge)
 
@@ -1083,15 +1044,19 @@ class ChatBubble(QFrame):
     def update_font_size(self, font_size: int):
         html = _format_message_html(self.raw_text, font_size=font_size)
         self.text_browser.setHtml(html)
+        self._last_w = None  # force a recompute at the new font size
         self._recompute_height()
 
     def _recompute_height(self):
-        """Size the bubble to its content at the ACTUAL render width (prevents the
-        'bahut lamba' bug where height is measured before the widget has a real width)."""
+        """Size the bubble to its content at the ACTUAL render width. Skips work when the
+        width hasn't changed (so window resizes don't re-measure every bubble = smoother)."""
         doc = self.text_browser.document()
         w = self.text_browser.viewport().width()
         if w <= 10:
             w = 600  # sensible fallback until the first real layout pass
+        if getattr(self, "_last_w", None) == w:
+            return
+        self._last_w = w
         doc.setTextWidth(w)
         h = int(doc.size().height()) + 10
         self.text_browser.setFixedHeight(max(28, h))
@@ -1534,6 +1499,13 @@ class MainWindow(QMainWindow):
         self._jobs_timer.setInterval(2500)
         self._jobs_timer.timeout.connect(self._update_jobs_indicator)
         self._jobs_timer.start()
+
+        # Debounced session auto-save: coalesce many messages into ONE disk write
+        # (per-message saving was a noticeable source of lag during the agent loop).
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(1500)
+        self._save_timer.timeout.connect(self._auto_save_active_session)
 
     def _setup_ui(self):
         central_widget = QWidget()
@@ -2775,7 +2747,7 @@ class MainWindow(QMainWindow):
         count = self.messages_layout.count()
         self.messages_layout.insertWidget(count - 1, bubble)
         self._smooth_scroll_to_bottom()
-        QTimer.singleShot(100, self._auto_save_active_session)
+        self._save_timer.start()  # debounced — saves ~1.5s after activity settles
 
     def _on_user_option_clicked(self, selected_option: str):
         """User clicked an interactive decision option button."""

@@ -111,12 +111,15 @@ def _extract_targets(command: str) -> list:
 
 
 def _dedupe_cap(items: list, cap: int) -> list:
+    """De-duplicate (case-insensitive for strings) keeping the latest, capped to `cap`."""
     seen, out = set(), []
-    for it in items:
-        key = json.dumps(it, sort_keys=True) if isinstance(it, dict) else str(it)
+    # Walk newest-first so the most recent phrasing of a repeated item wins, then restore order.
+    for it in reversed(items):
+        key = json.dumps(it, sort_keys=True) if isinstance(it, dict) else " ".join(str(it).lower().split())
         if key not in seen:
             seen.add(key)
             out.append(it)
+    out.reverse()
     return out[-cap:]
 
 
