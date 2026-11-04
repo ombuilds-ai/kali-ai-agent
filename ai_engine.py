@@ -75,8 +75,10 @@ def get_system_prompt() -> str:
         operator_mode = cfg.get("operator_mode", True)
         effort = cfg.get("effort_level", "balanced")
         small = _is_small_model(_active_model_id(cfg))
+        model_roster = _configured_models_hint(cfg)
     except Exception:
         operator_mode, effort, small = True, "balanced", False
+        model_roster = ""
     mandate = _OPERATOR_MANDATE if operator_mode else ""
     effort_hint = _EFFORT_HINT.get(effort, _EFFORT_HINT["balanced"])
     # Drop the long methodology block in fast mode OR for small models (they focus better
@@ -176,7 +178,7 @@ After each execution you receive the output + an execution status line and may a
 
 ### Multi-Model (you can switch models mid-task):
 Both a Google Gemini key and an OpenAI/OpenRouter key may be configured, giving you access to models from both. Your conversation context is SHARED across models — whichever model is active sees the full transcript and this same system prompt, so switching never changes what you know or how you behave. When another model suits the current step better (e.g. a strong coding model for exploit code, a fast/cheap model for simple steps, a vision model when a screenshot is attached), set `switch_model` to that model's exact id (e.g. "gemini-2.0-flash" for direct Gemini, or "deepseek/deepseek-r1:free" for an OpenRouter model). The switch applies from the next turn. Only switch when it genuinely helps; otherwise omit the field.
-
+{model_roster}
 ### Self-Learning (record durable lessons):
 Your persistent memory above is built from these optional fields — populate them whenever relevant so you improve over time:
 - `learned_correction`: when a command FAILS and you work out the fix, state the durable lesson concisely (e.g. "nmap -sS SYN scan requires sudo", "gobuster needs -w wordlist path"). It will be remembered across sessions.
@@ -397,6 +399,84 @@ def _active_model_id(cfg: dict) -> str:
     if prov == "custom":
         return cfg.get("custom_model", "")
     return cfg.get("openai_model", "")
+
+
+def _model_tier(model_id: str) -> str:
+    """Heuristic capability tier from the model id — no network, no benchmark.
+
+    'strong' for big reasoning/coding models, 'fast' for small/quick ones, else 'balanced'.
+    Used only to help the agent self-route with `switch_model`; it never blocks a choice."""
+    m = (model_id or "").lower()
+    if not m:
+        return "balanced"
+    # Fast/small signals win first, so a "mini"/"lite" variant of a big family
+    # (e.g. gpt-4o-mini) is correctly treated as fast, not strong.
+    if _is_small_model(m):
+        return "fast"
+    if any(k in m for k in ("flash", "haiku", "gpt-3.5", "gemma", "phi-", "phi3")):
+        return "fast"
+    strong_markers = (
+        "opus", "sonnet", "gpt-4", "gpt-5", "o1", "o3", "o4",
+        "deepseek-r1", "deepseek-v3", "deepseek-chat", "reasoner",
+        "-pro", "qwen-max", "qwen2.5-coder", "command-r-plus",
+        "grok-2", "grok-3", "grok-4", "mixtral-8x22",
+        "llama-3.1-405", "llama-3.3-70",
+    )
+    if any(k in m for k in strong_markers):
+        return "strong"
+    # Large parameter counts (e.g. 70b, 72b, 405b, 8x22b) => strong.
+    for t in re.split(r"[^a-z0-9.]+", m):
+        mt = re.fullmatch(r"(?:\d+x)?(\d+(?:\.\d+)?)b", t)
+        if mt:
+            try:
+                if float(mt.group(1)) >= 30:
+                    return "strong"
+            except ValueError:
+                pass
+    return "balanced"
+
+
+def _configured_models_hint(cfg: dict) -> str:
+    """Build a short roster of the user's CONFIGURED models tagged by capability tier,
+    so the agent can pick the right one per task. Empty when fewer than 2 are set up."""
+    try:
+        active = (_active_model_id(cfg) or "").strip().lower()
+        seen = []
+
+        def _add(mid):
+            mid = (mid or "").strip()
+            if mid and mid.lower() not in [s.lower() for s in seen]:
+                seen.append(mid)
+
+        _add(cfg.get("gemini_model", ""))
+        _add(cfg.get("openai_model", ""))
+        _add(cfg.get("custom_model", ""))
+        for api in (cfg.get("custom_apis") or []):
+            if isinstance(api, dict):
+                _add(api.get("model", ""))
+
+        if len(seen) < 2:
+            return ""
+
+        label = {
+            "strong": "strong — use for planning, exploit/code writing, tricky reasoning, failure reflection",
+            "balanced": "balanced — general steps",
+            "fast": "fast — routine/simple steps & quick checks (save time & quota)",
+        }
+        lines = []
+        for mid in seen:
+            tier = _model_tier(mid)
+            tag = "  ← currently active" if mid.lower() == active else ""
+            lines.append(f"  - `{mid}` → {label[tier]}{tag}")
+        return (
+            "\n**Your configured models (switch with `switch_model`, EXACT id):**\n"
+            + "\n".join(lines)
+            + "\nRouting policy: escalate to a STRONG model for the opening plan, exploit/code writing, "
+            "and after a failure; drop to a FAST model for routine or repetitive steps. Context is shared, "
+            "so switching never loses state. Omit `switch_model` to stay on the current model.\n"
+        )
+    except Exception:
+        return ""
 
 
 def _is_small_model(model_id: str) -> bool:
