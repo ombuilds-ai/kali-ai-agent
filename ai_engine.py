@@ -170,6 +170,7 @@ You are also a great general assistant. For greetings, casual talk, general ques
 - **write_file**: create/overwrite a file (fields `file_path`, `file_content`, optional `file_append: true`). Prefer this over `echo >` / heredocs for writing scripts or configs. For root-owned paths, use bash + sudo instead.
 - **ghidra**: reverse-engineer binaries with Ghidra (field `ghidra_action`: `connect` | `analyze` | `functions` | `strings` | `decompile` | `script` | `status`). Workflow: `connect` once, then `analyze` with `file_path` to import+auto-analyze the binary the operator gives you; then `functions`/`strings` to explore, `decompile` with `function` (name or address) to get C pseudocode, or `script` with `script_code` (Ghidra Jython, `currentProgram` is available) for anything custom (patching, renaming, data extraction). Discuss findings with the operator as you go.
 - **job**: manage long-running background tasks (field `job_action`: `start` | `list` | `output` | `stop`). Use `start` with `command` for tasks that run for minutes/hours (full nmap sweeps, gobuster/ffuf, hashcat/john cracking, big downloads) so you can keep working; then `list`, `output` (with `job_id`), or `stop` (with `job_id`) to monitor/control them. Background jobs run as separate processes and do NOT share the shell's cwd — use self-contained commands.
+- **frida**: LIVE (dynamic) memory analysis & game-cheat making — the runtime counterpart to Ghidra's static analysis (field `frida_action`). This is Cheat-Engine-style power on a RUNNING process (local Linux process, or an Android/iOS app via `frida-server`). Actions: `connect` (set `frida_device`: `usb` for Android/iOS, `local`, or `remote:host:port`) | `processes` (optional `frida_target` to filter — find the game) | `attach` (`frida_target` = process name or pid) | `spawn` (`frida_target` = app/package id, starts suspended then resumes) | `scan` (`scan_type` like int32/float/double/int64/string + `scan_value` — the current value, e.g. HP=100) | `scan_next` (`scan_value` = the new value after it changed in-game; repeat to narrow to 1-3 addresses) | `aob` (`aob_pattern` like `"89 47 44 ?? ?? 5B"` with `??` wildcards) | `read`/`write`/`freeze`/`unfreeze` (`mem_address` + `scan_type` + `mem_value`; `freeze` locks a value by rewriting it continuously) | `modules`/`exports` (`frida_target` = module name) | `hook` (`frida_target` = `module!export` or address; optional `on_enter`/`on_leave` JS) | `force_return` (`frida_target` + `mem_value`) | `hook_log` (read captured hook events) | `unhook` | `detach` | `status`. See the Game-Cheat Workflow section below.
 - **gui**: desktop automation via `gui_action` (least reliable — prefer bash/tools whenever possible).
 - **chat**: just talk, no execution. Use while discussing/planning.
 
@@ -179,6 +180,15 @@ After each execution you receive the output + an execution status line and may a
 ### Multi-Model (you can switch models mid-task):
 Both a Google Gemini key and an OpenAI/OpenRouter key may be configured, giving you access to models from both. Your conversation context is SHARED across models — whichever model is active sees the full transcript and this same system prompt, so switching never changes what you know or how you behave. When another model suits the current step better (e.g. a strong coding model for exploit code, a fast/cheap model for simple steps, a vision model when a screenshot is attached), set `switch_model` to that model's exact id (e.g. "gemini-2.0-flash" for direct Gemini, or "deepseek/deepseek-r1:free" for an OpenRouter model). The switch applies from the next turn. Only switch when it genuinely helps; otherwise omit the field.
 {model_roster}
+### 🎮 Game-Cheat / Dynamic Analysis Workflow (Frida):
+When the operator wants cheats/trainers for a game, or live runtime analysis of any app, combine STATIC (Ghidra + APK inspection) and DYNAMIC (Frida) analysis:
+- **APK first (static, optional but powerful)**: if given an .apk, inspect it with bash — `unzip -l game.apk` to see libs, detect the engine (Unity Mono = `libmono`/`Assembly-CSharp.dll`; Unity IL2CPP = `lib/*/libil2cpp.so` + `global-metadata.dat`; Unreal = `libUE4`/`lib*Shipping*`; native = other `.so`). For IL2CPP, mention tools like Il2CppDumper to recover class/field/method names. Use Ghidra on the extracted `.so` for pseudocode. This tells you WHICH value/method to target before you ever attach.
+- **A running game is REQUIRED for actual cheats.** An APK alone is not enough — memory cheats need the live process. For mobile: the game must run on an Android device/emulator with `frida-server` running; then `frida connect` with `frida_device: "usb"`.
+- **Value-cheat loop (HP, coins, gems, ammo)**: `frida attach` → `frida scan` (scan_type + the value you currently see, e.g. 100) → ask the operator to change it in-game (take damage / spend coins) → `frida scan_next` with the new value → repeat until 1-3 addresses remain → `frida write` (one-shot) or `frida freeze` (lock it). Tell the operator exactly what to do between scans and list choices via `options` when helpful.
+- **Code/method cheats (god mode, one-hit kill, unlimited X)**: use `frida modules`/`exports` to find the target, then `frida hook` with `on_leave` like `"retval.replace(999)"`, or `force_return` to make a check always pass. For Unity IL2CPP, hook exports in `libil2cpp.so` using offsets/names recovered statically.
+- **Persistence tip**: raw addresses change every launch — prefer AoB patterns (`frida aob`) or module!export hooks for cheats that survive restarts.
+- Only ever do this for games/software the operator owns or is authorized to modify, and for offline/single-player modding or research — never to cheat in online multiplayer.
+
 ### Self-Learning (record durable lessons):
 Your persistent memory above is built from these optional fields — populate them whenever relevant so you improve over time:
 - `learned_correction`: when a command FAILS and you work out the fix, state the durable lesson concisely (e.g. "nmap -sS SYN scan requires sudo", "gobuster needs -w wordlist path"). It will be remembered across sessions.
@@ -218,6 +228,17 @@ You MUST format your response STRICTLY as a JSON object inside a markdown code b
   "ghidra_action": "connect | analyze | functions | strings | decompile | script | status (for action_type 'ghidra').",
   "function": "Function name or address to decompile (for ghidra decompile).",
   "script_code": "Ghidra Jython code to run (for ghidra script).",
+  "frida_action": "connect | processes | attach | spawn | scan | scan_next | aob | read | write | freeze | unfreeze | modules | exports | hook | force_return | hook_log | unhook | detach | status (for action_type 'frida').",
+  "frida_device": "usb | local | remote:host:port (for frida connect).",
+  "frida_target": "Process name/pid, app/package id, module name, or hook target 'module!export' / address (for frida).",
+  "scan_type": "int8|uint8|int16|uint16|int32|uint32|int64|uint64|float|double|string (for frida scan/read/write/freeze).",
+  "scan_value": "The value to scan for (number or string) — for frida scan / scan_next.",
+  "mem_address": "Target address like 0x7f... (for frida read/write/freeze/unfreeze).",
+  "mem_value": "Value to write/freeze, or the forced return value (for frida write/freeze/force_return).",
+  "mem_prot": "Optional memory protection filter for scans: rw- (data, default) or r-x (code).",
+  "aob_pattern": "Array-of-bytes pattern with ?? wildcards, e.g. '89 47 44 ?? ?? 5B' (for frida aob).",
+  "on_enter": "Optional Frida JS run on function entry, e.g. \"send(args[0].toInt32())\" (for frida hook).",
+  "on_leave": "Optional Frida JS run on function return, e.g. \"retval.replace(999)\" (for frida hook).",
   "switch_model": "Optional: exact model id to switch to for following turns (context is preserved).",
   "finding": "Optional: a concise engagement finding to remember (host/port/service/version/cred/vuln/foothold).",
   "gui_action": {{
@@ -321,6 +342,18 @@ def _extract_and_validate_json(raw: str) -> dict:
         "ghidra_action": str(parsed.get("ghidra_action", "")).strip().lower(),
         "function": str(parsed.get("function", "")).strip(),
         "script_code": str(parsed.get("script_code", "")),
+        # Frida dynamic-analysis / game-cheat fields.
+        "frida_action": str(parsed.get("frida_action", "")).strip().lower(),
+        "frida_target": str(parsed.get("frida_target", "")).strip(),
+        "frida_device": str(parsed.get("frida_device", "")).strip(),
+        "scan_type": str(parsed.get("scan_type", "")).strip().lower(),
+        "scan_value": parsed.get("scan_value", None),
+        "mem_address": str(parsed.get("mem_address", "")).strip(),
+        "mem_value": parsed.get("mem_value", None),
+        "mem_prot": str(parsed.get("mem_prot", "")).strip(),
+        "aob_pattern": str(parsed.get("aob_pattern", "")).strip(),
+        "on_enter": str(parsed.get("on_enter", "")),
+        "on_leave": str(parsed.get("on_leave", "")),
         "switch_model": str(parsed.get("switch_model", "")).strip(),
         "finding": str(parsed.get("finding", "")).strip(),
         "gui_action": parsed.get("gui_action") if isinstance(parsed.get("gui_action"), dict) else None,

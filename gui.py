@@ -24,6 +24,7 @@ from sessions import load_all_sessions, save_all_sessions, delete_session_by_id
 from shell_session import get_shell
 from jobs import get_job_manager
 from ghidra import get_ghidra
+from frida_tool import get_frida
 import tools
 import memory
 
@@ -1726,11 +1727,16 @@ class MainWindow(QMainWindow):
         self.btn_ghidra = QPushButton("🧬 Connect Ghidra")
         self.btn_ghidra.setToolTip("One-click: connect the agent to Ghidra for reverse engineering")
         self.btn_ghidra.clicked.connect(self._connect_ghidra)
+
+        self.btn_frida = QPushButton("🎮 Connect Frida")
+        self.btn_frida.setToolTip("One-click: connect the agent to Frida for live memory / game-cheat work (Android via frida-server = USB)")
+        self.btn_frida.clicked.connect(self._connect_frida)
         
         sidebar_layout.addWidget(self.btn_settings)
         sidebar_layout.addWidget(self.btn_plugins)
         sidebar_layout.addWidget(self.btn_target_scope)
         sidebar_layout.addWidget(self.btn_ghidra)
+        sidebar_layout.addWidget(self.btn_frida)
         sidebar_layout.addWidget(self.btn_audit)
         sidebar_layout.addWidget(self.btn_memory)
         sidebar_layout.addWidget(self.btn_clear)
@@ -2733,6 +2739,8 @@ class MainWindow(QMainWindow):
                 res.get("ghidra_action", ""), res.get("file_path", ""),
                 res.get("function", ""), res.get("script_code", ""),
             )
+        elif action_type == "frida":
+            self._run_frida_action(res)
         elif action_type == "gui" and gui_action:
             if self._vision_control:
                 # Live Screen Control: act autonomously (no per-click approval).
@@ -2851,6 +2859,77 @@ class MainWindow(QMainWindow):
         )
         self.cmd_worker.start()
 
+    def _run_frida_action(self, res: dict):
+        """Drive Frida for dynamic memory analysis / game-cheat making; runs off-thread."""
+        f = get_frida()
+        fa = (res.get("frida_action", "") or "").lower()
+        target = res.get("frida_target", "") or res.get("file_path", "")
+        scan_type = res.get("scan_type", "") or ""
+        scan_value = res.get("scan_value", None)
+        address = res.get("mem_address", "") or ""
+        mem_value = res.get("mem_value", None)
+        aob = res.get("aob_pattern", "") or ""
+        prot = res.get("mem_prot", "") or ""
+        on_enter = res.get("on_enter", "") or ""
+        on_leave = res.get("on_leave", "") or ""
+        device = res.get("frida_device", "") or ""
+
+        self.terminal_log.appendPlainText(f"\n[FRIDA] {fa} {target}".rstrip())
+        self.terminal_log.verticalScrollBar().setValue(self.terminal_log.verticalScrollBar().maximum())
+        self._set_busy_state(True)
+
+        def work(_cb):
+            if fa == "connect":
+                ok, out = f.connect(device)
+            elif fa == "status":
+                ok, out = True, f.status()
+            elif fa in ("processes", "ps", "list_processes"):
+                ok, out = f.list_processes(target)
+            elif fa == "attach":
+                ok, out = f.attach(target)
+            elif fa == "spawn":
+                ok, out = f.spawn(target)
+            elif fa == "detach":
+                ok, out = f.detach()
+            elif fa == "scan":
+                ok, out = f.scan(scan_type or "int32", scan_value, prot or "rw-")
+            elif fa in ("scan_next", "scannext", "refine"):
+                ok, out = f.scan_next(scan_value)
+            elif fa == "aob":
+                ok, out = f.scan_aob(aob, prot or "r-x")
+            elif fa == "read":
+                ok, out = f.read(address, scan_type)
+            elif fa == "write":
+                ok, out = f.write(address, scan_type, mem_value)
+            elif fa == "freeze":
+                ok, out = f.freeze(address, scan_type, mem_value)
+            elif fa == "unfreeze":
+                ok, out = f.unfreeze(address)
+            elif fa == "modules":
+                ok, out = f.list_modules(target)
+            elif fa in ("exports", "export"):
+                ok, out = f.list_exports(target)
+            elif fa == "hook":
+                ok, out = f.hook(target, on_enter, on_leave)
+            elif fa in ("force_return", "forcereturn"):
+                ok, out = f.force_return(target, mem_value)
+            elif fa in ("hook_log", "hooklog"):
+                ok, out = f.hook_log()
+            elif fa == "unhook":
+                ok, out = f.unhook()
+            else:
+                ok, out = False, (f"Unknown frida_action: {fa!r} (use connect/processes/attach/spawn/scan/"
+                                  "scan_next/aob/read/write/freeze/unfreeze/modules/exports/hook/hook_log/"
+                                  "force_return/unhook/detach/status).")
+            return ExecutionResult(success=ok, stdout=out if ok else "", stderr="" if ok else out,
+                                   exit_code=0 if ok else 1)
+
+        self.cmd_worker = CommandWorker(lambda cb: work(cb))
+        self.cmd_worker.finished_result.connect(
+            lambda r: self._handle_execution_result(r, command_text=f"frida:{fa}", echo_output=True)
+        )
+        self.cmd_worker.start()
+
     def _connect_ghidra(self):
         """One-click: locate Ghidra and report readiness (no AI turn)."""
         ok, msg = get_ghidra().connect()
@@ -2862,6 +2941,21 @@ class MainWindow(QMainWindow):
             self.btn_ghidra.setStyleSheet(
                 f"QPushButton {{ background: rgba(45, 212, 191, 0.12); color: {ACCENT_GREEN}; "
                 f"border: 1px solid {ACCENT_GREEN}; border-radius: 9px; padding: 7px 13px; font-weight: 600; }}"
+            )
+
+    def _connect_frida(self):
+        """One-click: connect Frida to the configured device (no AI turn)."""
+        cfg = load_config()
+        device = cfg.get("frida_device", "usb")
+        ok, msg = get_frida().connect(device)
+        self.terminal_log.appendPlainText(f"\n[FRIDA] {msg}\n")
+        self.terminal_log.verticalScrollBar().setValue(self.terminal_log.verticalScrollBar().maximum())
+        self._add_bubble("system", ("🎮 **Frida connected.** " + msg) if ok else ("⚠️ " + msg))
+        if ok:
+            self.btn_frida.setText("🎮 Frida ✓")
+            self.btn_frida.setStyleSheet(
+                f"QPushButton {{ background: rgba(59, 130, 246, 0.12); color: {ACCENT_CYAN}; "
+                f"border: 1px solid {ACCENT_CYAN}; border-radius: 9px; padding: 7px 13px; font-weight: 600; }}"
             )
 
     def _on_ai_error(self, error: str):

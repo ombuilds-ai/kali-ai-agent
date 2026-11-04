@@ -24,6 +24,7 @@ DEFAULT_CONFIG = {
     "operator_mode": True,       # never refuse authorized security tasks
     "free_models_only": False,   # OpenRouter: show only free models
     "effort_level": "balanced",  # "fast" | "balanced" | "deep" — reasoning depth vs speed
+    "frida_device": "usb",       # Frida target: "usb" (Android/iOS), "local", or "remote:host:port"
 }
 
 
