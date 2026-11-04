@@ -2,9 +2,10 @@ import sys
 import os
 import re
 import time
+import tempfile
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer, QPropertyAnimation, QEasingCurve
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer, QPropertyAnimation, QEasingCurve, QUrl
 from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QTextCursor, QPixmap, QImage, QPainter, QBrush, QPen
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
@@ -134,7 +135,12 @@ def _format_message_html(text: str, font_size: Optional[int] = None) -> str:
     )
     text = re.sub(r'\[([^\]]+)\]\((https?://[^\s)]+)\)', r'<a href="\2" style="color:#60a5fa; text-decoration:none;">\1</a>', text)
     text = re.sub(r'\*\*(.*?)\*\*', r'<strong style="color:#ffffff;">\1</strong>', text)
-    text = re.sub(r'\[IMG:(.*?)\]', r'<br><img src="file:///\1" style="max-width:380px; border-radius:10px; margin:6px 0;"><br>', text)
+    def _img_tag(m):
+        # Build a valid file:// URL that works on both Linux (/tmp/..) and Windows (C:\..).
+        url = QUrl.fromLocalFile(m.group(1)).toString()
+        return (f'<br><img src="{url}" style="max-width:380px; border-radius:10px; '
+                f'margin:6px 0;"><br>')
+    text = re.sub(r'\[IMG:(.*?)\]', _img_tag, text)
 
     # 3. Block-level markdown line by line (headings, lists, rules), ChatGPT-style.
     out = []
@@ -1191,11 +1197,15 @@ class CircularSpinnerWidget(QWidget):
 # ── Dynamic Auto-Expanding Input Edit ──────────────────────────────────────────
 class CompactInputTextEdit(QTextEdit):
     returnPressed = pyqtSignal()
-    
+    imageAttached = pyqtSignal(str)   # emits a local image path when an image is pasted/dropped
+
+    _IMG_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.document().contentsChanged.connect(self._adjust_height)
         self.setFixedHeight(30)
+        self.setAcceptDrops(True)
         
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Return and not event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
@@ -1208,6 +1218,100 @@ class CompactInputTextEdit(QTextEdit):
         doc_h = int(self.document().size().height())
         new_h = max(30, min(doc_h + 4, 90))
         self.setFixedHeight(new_h)
+
+    # ── Image paste / drag-drop support ──────────────────────────────────────
+    def _save_qimage_temp(self, image: QImage) -> Optional[str]:
+        """Persist a clipboard/dropped QImage to a temp PNG and return its path."""
+        try:
+            if image is None or image.isNull():
+                return None
+            d = os.path.join(tempfile.gettempdir(), "kali-ai-pasted")
+            os.makedirs(d, exist_ok=True)
+            path = os.path.join(d, f"paste_{int(time.time() * 1000)}.png")
+            if image.save(path, "PNG"):
+                return path
+        except Exception:
+            pass
+        return None
+
+    def _image_paths_from_mime(self, source) -> list[str]:
+        """Pull any image(s) out of mime data: raw image data OR local image-file URLs."""
+        paths: list[str] = []
+        try:
+            if source.hasImage():
+                img = source.imageData()
+                if isinstance(img, QImage):
+                    p = self._save_qimage_temp(img)
+                    if p:
+                        paths.append(p)
+                else:
+                    pm = QPixmap(img) if img is not None else None
+                    if pm is not None and not pm.isNull():
+                        p = self._save_qimage_temp(pm.toImage())
+                        if p:
+                            paths.append(p)
+            if not paths and source.hasUrls():
+                for url in source.urls():
+                    if url.isLocalFile():
+                        fp = url.toLocalFile()
+                        if fp.lower().endswith(self._IMG_EXTS) and os.path.isfile(fp):
+                            paths.append(fp)
+        except Exception:
+            pass
+        return paths
+
+    def canInsertFromMimeData(self, source) -> bool:
+        try:
+            if source.hasImage():
+                return True
+            if source.hasUrls() and any(
+                u.isLocalFile() and u.toLocalFile().lower().endswith(self._IMG_EXTS)
+                for u in source.urls()
+            ):
+                return True
+        except Exception:
+            pass
+        return super().canInsertFromMimeData(source)
+
+    def insertFromMimeData(self, source):
+        imgs = self._image_paths_from_mime(source)
+        if imgs:
+            for p in imgs:
+                self.imageAttached.emit(p)
+            # If there's also plain text alongside the image, keep the text.
+            if source.hasText() and source.text().strip():
+                self.insertPlainText(source.text())
+            return
+        # No image → behave like a normal plain-text paste.
+        if source.hasText():
+            self.insertPlainText(source.text())
+            return
+        super().insertFromMimeData(source)
+
+    def dragEnterEvent(self, event):
+        md = event.mimeData()
+        if md.hasImage() or (md.hasUrls() and any(
+            u.isLocalFile() and u.toLocalFile().lower().endswith(self._IMG_EXTS) for u in md.urls()
+        )):
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        md = event.mimeData()
+        if md.hasImage() or md.hasUrls():
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        imgs = self._image_paths_from_mime(event.mimeData())
+        if imgs:
+            for p in imgs:
+                self.imageAttached.emit(p)
+            event.acceptProposedAction()
+            return
+        super().dropEvent(event)
 
 
 # ── Audit Log Viewer ────────────────────────────────────────────────────────────
@@ -1874,6 +1978,8 @@ class MainWindow(QMainWindow):
         self.input_field.setPlaceholderText("Ask Kali-AI, discuss plan, or give command... (Enter to send)")
         self.input_field.setStyleSheet("background: transparent; border: none; font-size: 12px; color: #f8fafc; padding: 2px 0;")
         self.input_field.returnPressed.connect(self._on_send)
+        self.input_field.imageAttached.connect(self._add_attached_image)
+        self.input_field.setToolTip("Type a message, or paste / drag an image here to attach it")
         
         self.model_selector = QComboBox()
         self.model_selector.setToolTip("Select Active AI Model")
@@ -2439,8 +2545,22 @@ class MainWindow(QMainWindow):
             self, "Select Image", "", "Images (*.png *.jpg *.jpeg *.gif *.bmp *.webp)"
         )
         if file_path:
-            self._attached_images.append(file_path)
-            self._rebuild_preview_strip()
+            self._add_attached_image(file_path)
+
+    def _add_attached_image(self, path: str):
+        """Attach an image from any source (file dialog, clipboard paste, or drag-drop)."""
+        if not path or not os.path.isfile(path):
+            return
+        # Validate it's a loadable image and avoid duplicate attachments.
+        if QPixmap(path).isNull():
+            return
+        if path in self._attached_images:
+            return
+        if len(self._attached_images) >= 6:   # keep the request payload sane
+            QMessageBox.information(self, "Attachment limit", "You can attach up to 6 images per message.")
+            return
+        self._attached_images.append(path)
+        self._rebuild_preview_strip()
             
     def _rebuild_preview_strip(self):
         while self.preview_layout.count():
